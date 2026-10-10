@@ -97,10 +97,39 @@ _UVICORN_PORT = re.compile(r"--port(?:=|\s+)(\d+)", re.I)
 
 _DB_IMAGE_MARKERS = ("postgres", "mysql", "mariadb", "mongo", "redis", "memcached", "clickhouse")
 
+# Brokers, coordination, and search — never the HTTP app under test.
+_INFRA_IMAGE_MARKERS = (
+    "zookeeper",
+    "kafka",
+    "confluent",
+    "cassandra",
+    "elasticsearch",
+    "rabbitmq",
+    "nats",
+    "etcd",
+    "consul",
+)
+
 
 def _is_dependency_db_image(image: str) -> bool:
     lower = (image or "").lower()
     return any(marker in lower for marker in _DB_IMAGE_MARKERS)
+
+
+def _is_infra_image(image: str) -> bool:
+    lower = (image or "").lower()
+    return any(marker in lower for marker in _INFRA_IMAGE_MARKERS)
+
+
+def _looks_like_http_application(svc: dict[str, Any]) -> bool:
+    """Published ports alone are not enough (databases and brokers expose ports too)."""
+    if svc.get("build"):
+        return True
+    if _parse_healthcheck_http(svc):
+        return True
+    if _listen_port_from_service(svc) is not None:
+        return True
+    return False
 
 
 def _service_has_http_port(svc: dict[str, Any]) -> bool:
@@ -145,9 +174,9 @@ def _listen_port_from_service(svc: dict[str, Any]) -> int | None:
 
 def _score_app_service_candidate(name: str, svc: dict[str, Any], services: dict[str, Any]) -> int:
     image = str(svc.get("image") or "")
-    if _is_dependency_db_image(image):
+    if _is_dependency_db_image(image) or _is_infra_image(image):
         return -1
-    if not (svc.get("build") or _service_has_http_port(svc)):
+    if not _looks_like_http_application(svc):
         return -1
     score = 0
     for dep in depends_on_service_names(svc):

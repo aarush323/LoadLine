@@ -154,13 +154,16 @@ uv run loadline run --repo /home/aarush_linux/projects/neathacks/integration/tar
 uv run loadline run --repo /home/aarush_linux/projects/neathacks/tests/fixtures/fx-pyhttp-pg --fast
 ```
 
-### HoH (negative / messy compose)
+### HoH (team app — target repo must expose HTTP in Compose)
+
+**Boundary:** Loadline does not special-case HoH. If Compose had only Kafka/Postgres/Cassandra, Loadline correctly blocked with *no application service*. The **HoH repo** adds an `api` service (`Dockerfile` + `GET /health`) so boot/load/run can proceed. See `docs/LOADLINE.md` in the HoH tree.
 
 ```bash
+uv run loadline load --repo /home/aarush_linux/projects/HoH
 uv run loadline run --repo /home/aarush_linux/projects/HoH --fast
 ```
 
-Expect blockers or odd resolve (infra services); not a capacity success criterion.
+First image build is slow (ML stack). Pre-build: `docker compose -f /home/aarush_linux/projects/HoH/docker-compose.yml build api`.
 
 ---
 

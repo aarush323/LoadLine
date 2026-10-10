@@ -55,6 +55,12 @@ _THIRD_PARTY_KEY_PREFIXES = ("STRIPE_", "OPENAI_", "AWS_", "GITHUB_", "TWILIO_",
 
 _LOCAL_SECRET_KEY_RE = re.compile(r"(SECRET|PASSWORD|TOKEN|_KEY$)", re.I)
 
+# Kafka and similar: listener maps are config, not credentials.
+_BROKER_LISTENER_SCHEME = re.compile(
+    r"(?:^|[,\s])(?:PLAINTEXT|SSL|SASL_SSL|SASL_PLAINTEXT)://",
+    re.I,
+)
+
 
 @dataclass(frozen=True)
 class EnvPolicyOutcome:
@@ -179,11 +185,20 @@ def _interpolate_value(value: str, effective: dict[str, str]) -> tuple[str, bool
     return out, needs_input, summary
 
 
+def _is_broker_listener_config(key: str, value: str) -> bool:
+    upper = key.upper()
+    if "LISTENER" in upper or "ADVERTISED" in upper:
+        return True
+    return bool(_BROKER_LISTENER_SCHEME.search(value))
+
+
 def _looks_like_literal_credential(value: str) -> bool:
     text = value.strip()
     if not text or _is_compose_reference(text):
         return False
     if _is_url_value(text):
+        return False
+    if _BROKER_LISTENER_SCHEME.search(text):
         return False
     if text.startswith(("postgresql://", "postgres://", "mysql://", "redis://", "amqp://")):
         return False
@@ -309,7 +324,8 @@ def apply_env_policy(
             resolved = rewritten
 
         if (
-            not _is_local_secret_key(key)
+            not _is_broker_listener_config(key, resolved)
+            and not _is_local_secret_key(key)
             and not _is_third_party_env_key(key)
             and _looks_like_literal_credential(resolved)
         ):
