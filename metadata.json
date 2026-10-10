@@ -1,0 +1,61 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M4K72XNEM8WH4EZ7NQJNN3Q8",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 9,
+  "files_touched": [
+    "README.md",
+    "agents/investigator_prompt.md",
+    "agents/load_prompt.md",
+    "loadline/adapters/runtime/boot_and_prepare.py",
+    "loadline/adapters/runtime/compose_boot.py",
+    "loadline/adapters/runtime/prepare.py",
+    "loadline/adapters/runtime/probe.py",
+    "loadline/cli.py",
+    "loadline/config/__init__.py",
+    "loadline/config/compose_model.py",
+    "loadline/config/fingerprint.py",
+    "loadline/config/resolve.py",
+    "loadline/config/schema.py",
+    "loadline/config/target.py",
+    "loadline/core/env_policy.py",
+    "loadline/core/hints.py",
+    "loadline/core/sandbox_policy.py",
+    "loadline/investigator/k6_tool.py",
+    "loadline/investigator/run.py",
+    "loadline/load/__init__.py",
+    "loadline/load/agent.py",
+    "loadline/load/tools.py",
+    "loadline/run_pipeline.py",
+    "setup.md",
+    "skills/load/SKILL.md",
+    "tests/unit/test_boot_and_prepare.py",
+    "tests/unit/test_compose_model.py",
+    "tests/unit/test_hints_schema.py",
+    "tests/unit/test_investigator_tools.py",
+    "tests/unit/test_k6_operation_metrics.py",
+    "tests/unit/test_load_cmd.py",
+    "tests/unit/test_placeholder_env.py",
+    "tests/unit/test_prepare.py",
+    "tests/unit/test_resolve.py",
+    "tests/unit/test_run_pipeline_blocked.py",
+    "tests/unit/test_run_pipeline_single_agent.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 159515,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 4119817,
+    "output_tokens": 23553,
+    "api_call_count": 8
+  }
+}
