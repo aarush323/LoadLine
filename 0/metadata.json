@@ -1,0 +1,177 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M4KAAGBDP1XW2T074MXZ3G6W",
+  "session_id": "346ccf0f-17e9-45b3-8caa-bc518b13658a",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-10T16:28:47.105159028Z",
+  "branch": "main",
+  "checkpoints_count": 14,
+  "save_step_count": 12,
+  "files_touched": [
+    "loadline/adapters/runtime/compose_boot.py",
+    "loadline/core/env_policy.py",
+    "setup.md",
+    "tests/fixtures/fx-bad-config/compose.yaml",
+    "tests/unit/test_compose_boot_generalization.py",
+    "tests/unit/test_env_policy.py"
+  ],
+  "agent": "Cursor",
+  "model": "composer-2.5",
+  "turn_id": "02ec0cdc7461",
+  "checkpoint_transcript_start": 107,
+  "transcript_lines_at_start": 107,
+  "compact_transcript_start": 31,
+  "token_usage": {
+    "input_tokens": 34833,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 4527457,
+    "output_tokens": 10846,
+    "api_call_count": 8
+  },
+  "session_metrics": {
+    "turn_count": 28,
+    "context_tokens": 182612,
+    "context_window_size": 200000
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-10T16:28:47.058817932Z",
+    "agent_lines": 83,
+    "agent_removed": 5,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 83,
+    "total_lines_changed": 88,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 316,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 316,
+      "user_lines_removed": 0,
+      "agent_lines_added": 83,
+      "agent_lines_removed": 5,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 316,
+      "user_lines_removed": 0,
+      "agent_lines_added": 83,
+      "agent_lines_removed": 5,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 316,
+      "user_lines_removed": 0,
+      "agent_lines_added": 83,
+      "agent_lines_removed": 5,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 316,
+      "user_lines_removed": 0,
+      "agent_lines_added": 83,
+      "agent_lines_removed": 5,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    },
+    {
+      "checkpoint_number": 6,
+      "user_lines_added": 316,
+      "user_lines_removed": 0,
+      "agent_lines_added": 83,
+      "agent_lines_removed": 5,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    },
+    {
+      "checkpoint_number": 7,
+      "user_lines_added": 316,
+      "user_lines_removed": 0,
+      "agent_lines_added": 83,
+      "agent_lines_removed": 5,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    },
+    {
+      "checkpoint_number": 8,
+      "user_lines_added": 316,
+      "user_lines_removed": 0,
+      "agent_lines_added": 83,
+      "agent_lines_removed": 5,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    },
+    {
+      "checkpoint_number": 9,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 10,
+      "user_lines_added": 316,
+      "user_lines_removed": 0,
+      "agent_lines_added": 83,
+      "agent_lines_removed": 5,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    },
+    {
+      "checkpoint_number": 11,
+      "user_lines_added": 316,
+      "user_lines_removed": 0,
+      "agent_lines_added": 83,
+      "agent_lines_removed": 5,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    },
+    {
+      "checkpoint_number": 12,
+      "user_lines_added": 316,
+      "user_lines_removed": 0,
+      "agent_lines_added": 83,
+      "agent_lines_removed": 5,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    },
+    {
+      "checkpoint_number": 13,
+      "user_lines_added": 316,
+      "user_lines_removed": 0,
+      "agent_lines_added": 83,
+      "agent_lines_removed": 5,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    }
+  ]
+}
