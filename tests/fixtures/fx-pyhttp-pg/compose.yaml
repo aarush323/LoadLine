@@ -1,0 +1,15 @@
+services:
+  web:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://app:app@db:5432/app
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app

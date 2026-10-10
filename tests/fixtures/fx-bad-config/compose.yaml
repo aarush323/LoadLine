@@ -1,0 +1,7 @@
+services:
+  app:
+    image: alpine:3.20
+    ports:
+      - "8080:8080"
+    environment:
+      REQUIRED_APP_TOKEN: ${REQUIRED_APP_TOKEN:?must be set}

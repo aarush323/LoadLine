@@ -1,0 +1,10 @@
+# Sealed acceptance oracle — not read by loadline/ (tech_doc.md §18.1).
+fixture: fx-docker-http
+role: dockerfile_only_http
+smoke_paths:
+  - /health
+acceptance:
+  discovery_must_find: dockerfile
+  baseline_required: true
+  honest_null_allowed: true
+flaws: []

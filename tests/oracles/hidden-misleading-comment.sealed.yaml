@@ -1,0 +1,9 @@
+# Hidden-cause: obvious comment is wrong (tech_doc.md §18.1).
+case_id: hidden-misleading-comment
+decoy_comment_substrings:
+  - "N+1 query"
+  - "obvious bottleneck"
+true_limit: host
+rule: >-
+  A finding must not cite the decoy comment as mechanism or observed_fact unless
+  at least one ledger prediction_scored event has outcome confirmed.

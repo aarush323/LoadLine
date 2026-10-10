@@ -1,0 +1,8 @@
+# Hidden-cause: two competing explanations (tech_doc.md §18.1).
+case_id: hidden-competing-hypotheses
+competing_mechanisms:
+  - cpu-bound
+  - dependency-bound
+rule: >-
+  With zero confirmed discriminating predictions, neither mechanism may appear
+  as a supported finding; both remain hypothesis-tagged in the report model.

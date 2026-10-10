@@ -1,0 +1,35 @@
+# Secrets and local env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Loadline runtime output
+runs/
+integration/targets/
+
+# Local tooling / archives
+.archive-pre-reset/
+.DS_Store
+.idea/
+.vscode/
+
+# entire-graph (keep graph-agent.md; see .entire/.gitignore for the rest)
+.entire/tmp/
+.entire/logs/
+.entire/metadata/
+.entire/settings.local.json

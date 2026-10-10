@@ -1,0 +1,11 @@
+# Sealed acceptance oracle — not read by loadline/ (tech_doc.md §18.1).
+fixture: fx-pyhttp-pg
+role: python_http_postgres
+smoke_paths:
+  - /health
+  - /api/items
+acceptance:
+  discovery_must_find: compose
+  baseline_required: true
+  honest_null_allowed: true
+flaws: []

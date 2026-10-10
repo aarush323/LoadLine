@@ -1,0 +1,10 @@
+Where I’d be careful:
+
+It’s written for Codex, and claims to have checked “official documentation” for Claude Code, Codex, Cursor and OpenCode. I can’t verify the install-path table it gives (.agents/skills/ and so on). I put those in the prompt as “verify each host’s current path at build time.”
+The search vs query mismatch. It lists query as Entire’s ranked search command, but the CLI reference I found listed search. The prompt now says to check entire graph help and treat the installed version as the authority.
+Route support is still unverified. The review says Entire documents framework routes “where supported,” but I couldn’t confirm that, so route discovery stays a spike.
+It drops my second skill (report and apply-fix). That’s fine for v1. I kept it as a later add-on.
+
+What changed in the prompt: decision 7 (Entire adapter), decision 9 (CPU), decision 11 (board sections), two new decisions (16: boot reliability, 17: delivery), the overrides section (no in-app EnvPlanner, no MCP), the spike list, a new build step 9 for the skill, and the definition of done.
+
+ chec all this out and actually check the entire stuff and what exatlyt we will be using and map it all out . do the same withe veryhting . the hld is done . now in implementation plan every single thing we write should be thought of veirfied thru a judge cirituqe composer agrnt and in depthe evrything should be documented so check alllll out and lets like deepend implemetnation plan . follow tech md as bible obv . and nderstand what we trying to do . if any q ask do not assume anuthing at all 

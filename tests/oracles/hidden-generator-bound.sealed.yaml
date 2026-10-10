@@ -1,0 +1,7 @@
+# Hidden-cause: generator-bound run (tech_doc.md §18.1).
+case_id: hidden-generator-bound
+primary_attribution: generator
+verdict: invalid(generator_limited)
+rule: >-
+  When primary limit attribution is generator, no finding prose may claim an
+  application bottleneck.

@@ -1,0 +1,10 @@
+# Git-history ground truth (tech_doc.md §18.1) — parent of pinned template commit.
+case_id: git-history-full-stack-template
+target_repo: full-stack-fastapi-template
+fix_commit: 7257e606cb94eada1dca40173e2b7f99dd549bc6
+parent_commit: 0007f609ec8467c913283f44660f5e50257a6d7a
+investigate_at: parent_commit
+sealed_fix_summary: "Release-notes and dependency bump at fix commit; not a loadline runtime flaw oracle."
+forbidden_claim_substrings_without_confirmed_prediction:
+  - "react-table 9"
+  - "tanstack/react-table"
