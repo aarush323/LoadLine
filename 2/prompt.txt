@@ -1,0 +1,178 @@
+1 rate=2.0 p95_widget=752ms p95_healthz=4ms
+  [investigate] ← run_k6 exp exp-k6-0001 p95_widget=752ms err_widget=20 p95_healthz=4ms err_healthz=7 p95_readyz=9ms err_readyz=3
+  [investigate] → read_file /home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-1/k6.stdout L1-L80
+   ← read_file error path outside repository
+why tf is it reading the answering . make plan to tightrn guardrails
+
+---
+
+# Loadline: Make Investigation Reports Human-Readable and Evidence-Based
+
+Improve Loadline's existing final report generation so that the report explains performance failures clearly to an engineer who has never seen the terminal logs.
+
+The investigation loop is already working: the agent explores the repository, runs k6 experiments, compares endpoints and inspects source code. **The problem is how it communicates its findings.** The current report starts with route inventories, dense tables and implementation details instead of explaining what failed and why.
+
+## 1. Inspect the existing implementation first
+
+Trace the current path from the investigator's findings and experiment ledger to the final `report.md`.
+
+Identify where the report is actually authored, what evidence is available, and whether a deterministic renderer overwrites or restructures the agent's explanation.
+
+Make the smallest coherent change to the existing reporting path. Preserve the single-agent investigation loop, current tools, run artifacts, experiment history and safety constraints. Do not introduce another agent, reporting subsystem, mandatory investigation stages or a new architecture.
+
+The report must remain specific to each investigation. Do not hard-code the example service's endpoint, failure, code locations or diagnosis.
+
+## 2. Write for a human, in this order
+
+### A. Start with the verdict
+
+Open with a short, plain-English explanation containing:
+
+- Which API or APIs experienced degradation.
+- What users or callers would experience.
+- At approximately what tested load the behavior changed.
+- The most likely cause, in one clear sentence.
+- How confident the investigation is and any important measurement limitations.
+
+For example, for the current unreliable service, a useful opening would explain that `GET /widgets/{widget_id}` becomes extremely slow at higher offered load, while the health endpoint remains responsive. It would then explain that the code appears to hold a scarce database connection during a slow downstream request, causing other requests to queue.
+
+This is an illustrative explanation, not text to hard-code. Derive every claim from the current run's evidence.
+
+Distinguish performance degradation from confirmed request failures. Do not say an API returned HTTP 503 unless the status code was actually observed or reliably recovered from the experiment data.
+
+### B. Explain what happened under load
+
+Show a simple graph of **offered request rate versus p95 latency** for the relevant endpoint.
+
+Requirements:
+- Use actual measurements from the run ledger or structured experiment results.
+- Label axes, units, endpoint, and workload.
+- Identify separate experiments accurately; do not pretend independent runs were a continuous load ramp.
+- Show control endpoints separately where useful, especially when they reveal that one API degrades while others remain responsive.
+- Include dropped iterations, achieved throughput or error rate when available and relevant.
+- Do not plot missing data as zero or invent data points.
+- Accompany the graph with two or three plain-English observations explaining the change in behavior.
+
+Prefer an embedded SVG or another lightweight chart artifact supported by the existing reporting workflow. Avoid introducing a heavyweight chart dependency solely for this report. Include a compact text-based chart or data summary as a fallback so the report remains useful in a terminal or a Markdown viewer that cannot display the graphic.
+
+The graph is evidence, not decoration: the accompanying explanation must state what the measurements actually demonstrate.
+
+### C. Identify the affected API
+
+For each important finding, show:
+
+**HTTP method and route:** the real route, not an invented or guessed path.
+
+**Handler:** the source file, function name and line range.
+
+**Observed behavior:** what happened to latency, throughput and errors as the workload changed.
+
+**Impact:** what a caller would experience, stated only as strongly as the evidence supports.
+
+Also distinguish:
+- The primary degraded endpoint.
+- Other endpoints affected by shared-resource contention.
+- Control endpoints that remained responsive.
+- Endpoints that were not tested or could not be mapped confidently.
+
+Do not make the reader decipher raw route-inventory output.
+
+### D. Show the actual code responsible
+
+This is essential. A diagnosis that only says `app/main.py:100-104` is not enough.
+
+Use the repository-reading tools to retrieve the exact relevant source lines. Include a short, accurate fenced code snippet with the correct file path and line range.
+
+Select the smallest useful excerpt that shows the suspected mechanism, plus enough surrounding context to understand the execution order. For example, in the current test repository, the important sequence is acquiring a database session, making a slow downstream call while still holding that session, and subsequently recording access.
+
+After the code snippet, explain in plain English:
+1. What the code does.
+2. Which resource remains occupied and for how long.
+3. Why that becomes a problem under concurrency.
+4. How this mechanism matches the measurements.
+
+Do not fabricate code, paraphrase a snippet as though it were exact source, or cite a line range that has not been inspected. If the source cannot be retrieved, say so.
+
+For long files, include only the relevant excerpt. Do not dump an entire handler or source file unnecessarily.
+
+### E. Explain the causal chain
+
+Describe the failure as a short sequence of cause and effect, using the actual resources and operations found in the repository.
+
+For example, where supported by the source and measurements:
+
+Slow downstream request while holding a database connection → scarce connections remain occupied → concurrent requests wait for a connection → checkout timeouts or failed requests → latency rises and throughput stops scaling.
+
+Follow this with a brief explanation of why the hypothesis accounts for the observed results better than the main alternatives.
+
+Clearly separate:
+- **Observed:** facts directly supported by experiment output or retrieved source.
+- **Inferred:** the explanation that best accounts for those facts.
+- **Unverified:** predictions, assumed status codes, or behavior that still requires testing.
+
+Do not invent resource exhaustion, database timeouts or HTTP errors merely because the pattern looks familiar.
+
+### F. Give an actionable next step
+
+Explain the smallest code change most likely to address the diagnosed cause and why it should help.
+
+If the repository already contains an alternative or fixed implementation, identify it and explain the relevant difference.
+
+Then specify a targeted validation experiment: repeat a comparable workload against the modified behavior and compare p95/p50 latency, error counts and status codes, achieved throughput, dropped iterations, and affected control endpoints where available.
+
+**Never describe a proposed fix as validated unless a post-fix experiment was actually executed and its results support that conclusion.**
+
+### G. Keep detailed evidence available without overwhelming the reader
+
+Finish with a compact technical appendix containing:
+- Experiment IDs, offered rates, durations and tested endpoint combinations.
+- Relevant p50/p95 values, errors, achieved rates and dropped iterations when available.
+- Source locations used to support the diagnosis.
+- Material limitations and untested hypotheses.
+
+Keep this appendix concise. Preserve the underlying artifacts and ledger for deeper debugging instead of reproducing all the logs in the report.
+
+## 3. Fix or explicitly handle the current measurement-integrity problem
+
+The existing report says `status_counts` was `{"0": n}` and `error_rate` was `1.0` for every request, including apparently responsive health endpoints. Those results conflict with the reported low health-endpoint latencies, so the reporting path cannot safely treat all of those values as confirmed application errors.
+
+Trace how the existing `run_k6` output is converted into structured measurements.
+
+- Determine whether the underlying k6 output contains actual HTTP status codes and whether the current extraction is losing or misclassifying them.
+- If the required evidence is already available, fix the narrow extraction bug and add a regression test.
+- If it is not available, preserve the limitation explicitly in the report. Do not guess the status codes or silently turn transport errors into HTTP failures.
+- Keep the `read_file` repository boundary intact. Do not bypass it by asking the investigator to read run artifacts outside the repository. Use structured experiment results or an existing appropriate artifact-access mechanism.
+
+The report must not claim greater certainty than the measurement pipeline supports.
+
+## 4. Quality bar
+
+The final report should let an engineer answer, within roughly 30 seconds of opening it:
+
+1. Which API is struggling?
+2. What is the impact?
+3. What does the graph show?
+4. Which exact code explains the behavior?
+5. Why does that code produce the observed symptoms?
+6. What should be changed and how will we verify it?
+
+Use clear headings, short paragraphs and selective tables. Explain specialized terms when first used. Avoid raw tool traces, repetitive route inventories, unexplained metrics, walls of text and generic AI-generated recommendations.
+
+The report should remain technically useful to an experienced engineer, but its main narrative must be understandable without reading the terminal logs.
+
+## 5. Validate the change
+
+Add or update focused tests for report generation, including:
+- A report with one degraded endpoint and one responsive control endpoint.
+- A source-backed diagnosis that includes an accurate code excerpt.
+- A run with missing or unreliable status codes.
+- A run with insufficient evidence for a confident root-cause claim.
+- Graph generation with missing measurements and multiple independent experiments.
+
+Run the relevant tests and, if the existing test workflow permits, regenerate the report for the current `unreliable-blind` run or a repeat run.
+
+Inspect the resulting Markdown and graph artifact, not just the passing tests. Confirm that the explanation appears first, source snippets are accurate, metrics are not fabricated, and the report isn't overwritten by a later templated stage.
+
+At the end, summarize the files changed, tests run, any remaining limitations, and the location of the generated report.we have entire thing asw so we can show graph and shit . 
+
+check this in depthhh focusd fixed chanhges

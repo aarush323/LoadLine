@@ -1,0 +1,80 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M4K0TSKCY5ES1Z65SG2PGG7J",
+  "session_id": "f7a8a086-b91f-4dde-9c41-1cc52cb1a983",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-10T13:42:55.728710916Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "save_step_count": 2,
+  "files_touched": [
+    "loadline/adapters/runtime/compose_boot.py",
+    "loadline/investigator/tools.py",
+    "loadline/ui/agent_trace.py",
+    "tests/unit/test_agent_trace.py",
+    "tests/unit/test_compose_boot_generalization.py",
+    "tests/unit/test_readiness.py"
+  ],
+  "agent": "Cursor",
+  "model": "composer-2.5",
+  "turn_id": "7f6668f11b3e",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 87071,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 663508,
+    "output_tokens": 11077,
+    "api_call_count": 2
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-10T13:42:55.712787554Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 648,
+    "human_modified": 27,
+    "human_removed": 0,
+    "total_committed": 648,
+    "total_lines_changed": 695,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 173,
+      "user_lines_removed": 27,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "loadline/adapters/runtime/compose_boot.py": 85,
+        "loadline/investigator/tools.py": 2,
+        "loadline/ui/agent_trace.py": 32,
+        "tests/unit/test_agent_trace.py": 13,
+        "tests/unit/test_compose_boot_generalization.py": 35,
+        "tests/unit/test_readiness.py": 6
+      },
+      "user_removed_per_file": {
+        "loadline/adapters/runtime/compose_boot.py": 14,
+        "loadline/ui/agent_trace.py": 8,
+        "tests/unit/test_readiness.py": 5
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 173,
+      "agent_lines_removed": 27
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 173,
+      "agent_lines_removed": 27
+    }
+  ]
+}
