@@ -3,7 +3,7 @@
   "checkpoint_id": "01M4K5A57V20TZ3YMEQ48Y37S3",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 7,
+  "checkpoints_count": 11,
   "files_touched": [
     "agents/investigator_prompt.md",
     "loadline/adapters/generator/k6_compiler.py",
@@ -40,13 +40,20 @@
       "compact_transcript": "/1/transcript.jsonl",
       "content_hash": "/1/content_hash.txt",
       "prompt": "/1/prompt.txt"
+    },
+    {
+      "metadata": "/2/metadata.json",
+      "transcript": "/2/full.jsonl",
+      "compact_transcript": "/2/transcript.jsonl",
+      "content_hash": "/2/content_hash.txt",
+      "prompt": "/2/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 125830,
+    "input_tokens": 263912,
     "cache_creation_tokens": 0,
-    "cache_read_tokens": 3661933,
-    "output_tokens": 46204,
-    "api_call_count": 6
+    "cache_read_tokens": 6176517,
+    "output_tokens": 61380,
+    "api_call_count": 9
   }
 }

@@ -1,0 +1,950 @@
+Human-readable, evidence-based investigation reports
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
+
+---
+
+push repo again . v0 working as commit message
+
+---
+
+now chheck actual abd repo check if our shit caught all or what did it miss in depth and then check our code do deeep rca on why soemn shit might have missed and cook
+neatlogs:
+# Trace
+
+- Trace ID: 9f5ffd07b2fa8f47ee1f046bad8e63c9
+- Name: loadline run
+- Status: success
+- Workflow: capacity-investigation
+- Started: 2026-10-10T13:27:33.652Z
+- Duration: 316331 ms
+- Spans: 24
+- Trace URL: https://app.neatlogs.com/traces/9f5ffd07b2fa8f47ee1f046bad8e63c9?orgId=fe80a1dd-46c4-4714-9ba4-2fb972692d5d&projectId=e5d97cf1-860e-4b1e-86da-ac908a8c3a3f
+
+## 1. loadline run
+- Span ID: 8a09480b5fab7a4e
+- Type: workflow
+- Status: SUCCESS
+- Created: 2026-10-10T13:27:31.983Z
+- Updated: 2026-10-10T13:32:48.314Z
+
+### Input
+```
+The app is booted. Find which endpoints break under load and why, from the code and from run_k6. Your last message is the report.
+```
+
+### Output
+```
+# Loadline report — `unreliable-blind` widget service
+
+## Route inventory
+`repo(routes)` returned 6 `HANDLES_ROUTE` entries. Two are not part of the widget service's HTTP surface, so the real API is four routes:
+
+| Method | Path | Handler / location | Tested? |
+|---|---|---|---|
+| GET | `/widgets/{widget_id}` | `app/main.py:70` `get_widget` | **Yes — this is the fault** |
+| GET | `/healthz` | `app/main.py:136` | Yes (as control) |
+| GET | `/readyz` | `app/main.py:142` | Yes (as control) |
+| GET | `/metrics` | `app/main.py:164` | Yes (in mixed load) |
+| GET | `/compute` | `downstream/main.py:24` (port 9000 stub, not on the app) | Skipped — different process |
+| GET | `/home/.../unreliable-blind` | spurious inventory entry | Skipped — not a real route |
+
+No auth exists anywhere (no login handler, no dependency), so no `auth`/`use_auth` was needed.
+
+## What the code says (before any load)
+- **The only DB user is `/widgets/{widget_id}`.** It runs `_handle_buggy` (`app/main.py:98-105`): it acquires a DB session, does `_load_widget` (`:120`), **then awaits the downstream call while still holding the connection**, then `_record_access`. The fixed twin `_handle_fixed` (`:108-117`) releases before the downstream call — but `FIX_ENABLED` defaults to `False` (`app/config.py:53`, `docker-compose.yml:37`), so the running app is on the buggy path.
+- **The resource is tiny and bounded**: `pool_size=5, max_overflow=0, pool_timeout=5.0` (`app/db.py:25-31`, `app/config.py:37-41`). `acquire_session` forces eager checkout specifically so exhaustion surfaces here (`app/db.py:37-60`).
+- **The downstream is slow on purpose**: 300–800 ms ± jitter, plus a 5 % chance of +1500 ms (`downstream/main.py:16-31`).
+- **Pool exhaustion is reported as a generic 503** (`app/main.py:78-83`), and `/readyz` probes the pool with a hard `wait_for(..., 1.0)` (`app/main.py:154`).
+- Naive capacity estimate: `5 connections / ~0.55 s hold ≈ 9 rps` of *successful* widget requests; above that the pool queue grows and requests park until the 5 s `pool_timeout` fires → 503.
+
+## Load results (k6)
+All runs are in the widget service; p50/p95 in ms.
+
+| exp | endpoints (rate) | widget p50 / p95 | vus_max / ceiling | drops | note |
+|---|---|---|---|---|---|
+| `exp-k6-0001` | widget+healthz+readyz @2 | 566 / 752 | 1/50 | 0 | healthy baseline; healthz 3.6, readyz 8.6 |
+| `exp-k6-0004` | widget @5 | 541 / 816 | 4/50 | 0 | still healthy — vus(4) < pool(5) |
+| `exp-k6-0002` | widget @10 | 3022 / 5529 | 48/50 | 1 | **knee**: queuing, p95 > 5 s |
+| `exp-k6-0005` | widget @12 | 5004 / 5641 | 50/50 | 32 | p50 pinned to `pool_timeout` (5 s) |
+| `exp-k6-0008` | widget @20 | 5214 / 5706 | 50/50 | 282 | achieved 10.6/20; throughput capped |
+| `exp-k6-0007` | readyz+healthz+metrics @10 (no widget) | — | 0/50 | 0 | readyz **8.4 ms** — pool free ⇒ ready |
+| `exp-k6-0006` | widget(8)+healthz+readyz+metrics @30 | 5184 / 5696 | 60/60 | 408 | **the smoking gun** (below) |
+
+### The decisive run — `exp-k6-0006` (rate 30, mixed)
+| operation | p50 | p95 |
+|---|---|---|
+| `widget` | **5184** | **5696** |
+| `readyz` | **1003** | 1006 |
+| `healthz` | 1.25 | 5.8 |
+| `metrics` | 3.3 | 11.5 |
+
+Under the same load, `/healthz` (1 ms) and `/metrics` (3 ms) stayed fast while `/widgets` sat at ~5.2 s and `/readyz` sat at **exactly 1003 ms ≈ the 1.0 s `wait_for` in `app/main.py:154`**. That is the signature of *pool* starvation, not a dead app: the event loop is responsive (healthz/metrics), but every DB checkout is queued behind a widget request that is holding its connection across the slow downstream call.
+
+## Where behavior changes and why
+- **Knee between 5 and 10 offered rps** (`exp-0004` healthy → `exp-0002` degraded). Exactly what `pool_size=5` over a ~0.55 s downstream hold predicts (~9 rps).
+- **Above the knee, latency is clamped to the pool timeout.** widget p50 = 5.02–5.21 s across rates 12/20/30 in three separate runs — i.e. requests are not slow, they *time out* (`pool_timeout=5.0`, `app/db.py:29`) and return the 503 from `app/main.py:78-83`.
+- **Throughput plateaus ~10–12 rps** (achieved 10.45, 10.63, 12.0) no matter how high the offered rate goes — the pool, not the generator, is the ceiling. p95 kept rising with the drops, so this is app-bound, not generator-bound.
+- **Dropped iterations (32 → 282 → 408)** appear only once VUs are held ~5 s each and the VU ceiling is reached — a *consequence* of the 5 s stalls, not an independent failure.
+- `/readyz` flips from **8.4 ms (healthy, `exp-0007`)** to **1003 ms / not-ready (`exp-0006`)** purely as a function of widget load — it shares the same 5-connection pool.
+
+## Why it breaks (pointer to the fault)
+`/widgets/{widget_id}` holds a pooled connection for the entire downstream call (`app/main.py:100-104`) while that call takes 300–800 ms (+spikes). With only 5 connections and no overflow, ~9 rps saturates the pool; excess requests wait in the pool queue and die at the 5 s timeout, surfacing as an opaque 503. The generic detail (`"Service temporarily unavailable"`, `app/main.py:83`) hides that the DB pool is the culprit. `/readyz` correctly reports the same starvation, and `/healthz`/`/metrics` prove the process itself is fine.
+
+## Limits / caveats
+- **Status codes were not readable from the harness.** `status_counts` came back as `{"0": n}` with `error_rate 1.0` for *every* request — including `exp-0007` where `/readyz` was demonstrably healthy and a `/nonexistent` probe (`exp-k6-0003`, p50 1.2 ms). I therefore could not separate 2xx/404/503 by code; I inferred the 503 boundary from latency pinning at `pool_timeout` (5 s) and readyz at its 1.0 s `wait_for`. This is a reporting gap, not a result.
+- **Only the buggy path was exercised.** `FIX_ENABLED` cannot be flipped on the running app, so `_handle_fixed` (`app/main.py:108-117`) is unverified by measurement; the comparison is code-only.
+- `/compute` (`downstream/main.py`) lives on the separate stub service and was not hit directly; it was exercised indirectly via every widget request.
+- All widget probes used `widget_id=1`; `/widgets/999999` (`exp-k6-0003`) exercised the not-found branch and behaved identically (still paid the downstream call before the 404 check, `app/main.py:101-103` then `:85`).
+```
+
+### Metadata
+```
+{
+  "trace_catalog_app_version": "1.4.26"
+}
+```
+
+## 2. pydantic\_ai.agent.run
+- Span ID: 97791434de2ac7b7
+- Parent span ID: 8a09480b5fab7a4e
+- Type: agent\_action
+- Status: SUCCESS
+- Created: 2026-10-10T13:27:31.991Z
+- Updated: 2026-10-10T13:32:48.312Z
+
+### Input
+```
+The app is booted. Find which endpoints break under load and why, from the code and from run_k6. Your last message is the report.
+```
+
+### Output
+```
+# Loadline report — `unreliable-blind` widget service
+
+## Route inventory
+`repo(routes)` returned 6 `HANDLES_ROUTE` entries. Two are not part of the widget service's HTTP surface, so the real API is four routes:
+
+| Method | Path | Handler / location | Tested? |
+|---|---|---|---|
+| GET | `/widgets/{widget_id}` | `app/main.py:70` `get_widget` | **Yes — this is the fault** |
+| GET | `/healthz` | `app/main.py:136` | Yes (as control) |
+| GET | `/readyz` | `app/main.py:142` | Yes (as control) |
+| GET | `/metrics` | `app/main.py:164` | Yes (in mixed load) |
+| GET | `/compute` | `downstream/main.py:24` (port 9000 stub, not on the app) | Skipped — different process |
+| GET | `/home/.../unreliable-blind` | spurious inventory entry | Skipped — not a real route |
+
+No auth exists anywhere (no login handler, no dependency), so no `auth`/`use_auth` was needed.
+
+## What the code says (before any load)
+- **The only DB user is `/widgets/{widget_id}`.** It runs `_handle_buggy` (`app/main.py:98-105`): it acquires a DB session, does `_load_widget` (`:120`), **then awaits the downstream call while still holding the connection**, then `_record_access`. The fixed twin `_handle_fixed` (`:108-117`) releases before the downstream call — but `FIX_ENABLED` defaults to `False` (`app/config.py:53`, `docker-compose.yml:37`), so the running app is on the buggy path.
+- **The resource is tiny and bounded**: `pool_size=5, max_overflow=0, pool_timeout=5.0` (`app/db.py:25-31`, `app/config.py:37-41`). `acquire_session` forces eager checkout specifically so exhaustion surfaces here (`app/db.py:37-60`).
+- **The downstream is slow on purpose**: 300–800 ms ± jitter, plus a 5 % chance of +1500 ms (`downstream/main.py:16-31`).
+- **Pool exhaustion is reported as a generic 503** (`app/main.py:78-83`), and `/readyz` probes the pool with a hard `wait_for(..., 1.0)` (`app/main.py:154`).
+- Naive capacity estimate: `5 connections / ~0.55 s hold ≈ 9 rps` of *successful* widget requests; above that the pool queue grows and requests park until the 5 s `pool_timeout` fires → 503.
+
+## Load results (k6)
+All runs are in the widget service; p50/p95 in ms.
+
+| exp | endpoints (rate) | widget p50 / p95 | vus_max / ceiling | drops | note |
+|---|---|---|---|---|---|
+| `exp-k6-0001` | widget+healthz+readyz @2 | 566 / 752 | 1/50 | 0 | healthy baseline; healthz 3.6, readyz 8.6 |
+| `exp-k6-0004` | widget @5 | 541 / 816 | 4/50 | 0 | still healthy — vus(4) < pool(5) |
+| `exp-k6-0002` | widget @10 | 3022 / 5529 | 48/50 | 1 | **knee**: queuing, p95 > 5 s |
+| `exp-k6-0005` | widget @12 | 5004 / 5641 | 50/50 | 32 | p50 pinned to `pool_timeout` (5 s) |
+| `exp-k6-0008` | widget @20 | 5214 / 5706 | 50/50 | 282 | achieved 10.6/20; throughput capped |
+| `exp-k6-0007` | readyz+healthz+metrics @10 (no widget) | — | 0/50 | 0 | readyz **8.4 ms** — pool free ⇒ ready |
+| `exp-k6-0006` | widget(8)+healthz+readyz+metrics @30 | 5184 / 5696 | 60/60 | 408 | **the smoking gun** (below) |
+
+### The decisive run — `exp-k6-0006` (rate 30, mixed)
+| operation | p50 | p95 |
+|---|---|---|
+| `widget` | **5184** | **5696** |
+| `readyz` | **1003** | 1006 |
+| `healthz` | 1.25 | 5.8 |
+| `metrics` | 3.3 | 11.5 |
+
+Under the same load, `/healthz` (1 ms) and `/metrics` (3 ms) stayed fast while `/widgets` sat at ~5.2 s and `/readyz` sat at **exactly 1003 ms ≈ the 1.0 s `wait_for` in `app/main.py:154`**. That is the signature of *pool* starvation, not a dead app: the event loop is responsive (healthz/metrics), but every DB checkout is queued behind a widget request that is holding its connection across the slow downstream call.
+
+## Where behavior changes and why
+- **Knee between 5 and 10 offered rps** (`exp-0004` healthy → `exp-0002` degraded). Exactly what `pool_size=5` over a ~0.55 s downstream hold predicts (~9 rps).
+- **Above the knee, latency is clamped to the pool timeout.** widget p50 = 5.02–5.21 s across rates 12/20/30 in three separate runs — i.e. requests are not slow, they *time out* (`pool_timeout=5.0`, `app/db.py:29`) and return the 503 from `app/main.py:78-83`.
+- **Throughput plateaus ~10–12 rps** (achieved 10.45, 10.63, 12.0) no matter how high the offered rate goes — the pool, not the generator, is the ceiling. p95 kept rising with the drops, so this is app-bound, not generator-bound.
+- **Dropped iterations (32 → 282 → 408)** appear only once VUs are held ~5 s each and the VU ceiling is reached — a *consequence* of the 5 s stalls, not an independent failure.
+- `/readyz` flips from **8.4 ms (healthy, `exp-0007`)** to **1003 ms / not-ready (`exp-0006`)** purely as a function of widget load — it shares the same 5-connection pool.
+
+## Why it breaks (pointer to the fault)
+`/widgets/{widget_id}` holds a pooled connection for the entire downstream call (`app/main.py:100-104`) while that call takes 300–800 ms (+spikes). With only 5 connections and no overflow, ~9 rps saturates the pool; excess requests wait in the pool queue and die at the 5 s timeout, surfacing as an opaque 503. The generic detail (`"Service temporarily unavailable"`, `app/main.py:83`) hides that the DB pool is the culprit. `/readyz` correctly reports the same starvation, and `/healthz`/`/metrics` prove the process itself is fine.
+
+## Limits / caveats
+- **Status codes were not readable from the harness.** `status_counts` came back as `{"0": n}` with `error_rate 1.0` for *every* request — including `exp-0007` where `/readyz` was demonstrably healthy and a `/nonexistent` probe (`exp-k6-0003`, p50 1.2 ms). I therefore could not separate 2xx/404/503 by code; I inferred the 503 boundary from latency pinning at `pool_timeout` (5 s) and readyz at its 1.0 s `wait_for`. This is a reporting gap, not a result.
+- **Only the buggy path was exercised.** `FIX_ENABLED` cannot be flipped on the running app, so `_handle_fixed` (`app/main.py:108-117`) is unverified by measurement; the comparison is code-only.
+- `/compute` (`downstream/main.py`) lives on the separate stub service and was not hit directly; it was exercised indirectly via every widget request.
+- All widget probes used `widget_id=1`; `/widgets/999999` (`exp-k6-0003`) exercised the not-found branch and behaved identically (still paid the downstream call before the 404 check, `app/main.py:101-103` then `:85`).
+```
+
+## 3. repo
+- Span ID: f1d80dabe3ed110e
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:27:33.652Z
+- Updated: 2026-10-10T13:27:33.836Z
+
+### Input
+```
+{
+  "action": "routes",
+  "query": "",
+  "symbol": ""
+}
+```
+
+### Output
+```
+{'routes': [{'method': 'GET', 'path': '/home/aarush_linux/projects/neathacks/integration/targets/unreliable-blind', 'handler': None, 'file': None, 'line': None, 'source': 'HANDLES_ROUTE'}, {'method': 'GET', 'path': '/widgets/{widget_id}', 'handler': None, 'file': None, 'line': None, 'source': 'HANDLES_ROUTE'}, {'method': 'GET', 'path': '/healthz', 'handler': None, 'file': None, 'line': None, 'source': 'HANDLES_ROUTE'}, {'method': 'GET', 'path': '/readyz', 'handler': None, 'file': None, 'line': None, 'source': 'HANDLES_ROUTE'}, {'method': 'GET', 'path': '/metrics', 'handler': None, 'file': None, 'line': None, 'source': 'HANDLES_ROUTE'}, {'method': 'GET', 'path': '/compute', 'handler': None, 'file': None, 'line': None, 'source': 'HANDLES_ROUTE'}], 'count': 6, 'exhaustive': True, 'sources': ['HANDLES_ROUTE'], 'notes': [], 'coverage': 'entire'}
+```
+
+### Metadata
+```
+{
+  "tool_name": "repo"
+}
+```
+
+## 4. repo
+- Span ID: c3d6aa5fef6aad86
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:27:36.483Z
+- Updated: 2026-10-10T13:27:36.722Z
+
+### Input
+```
+{
+  "action": "search",
+  "query": "API prefix router",
+  "symbol": ""
+}
+```
+
+### Output
+```
+{'hits': [{'source': 'entire_graph', 'command': 'search', 'text': '{"query":"API prefix router","repo_root":"/home/aarush_linux/projects/neathacks/integration/targets/unreliable-blind","commit":"252fabbd9275f870c04b4a1cb6c22f546d05302b","tree":"12d0be3ce635c70d6a8c84a8d0abe220bdab7579","profile":"full","results":[{"rank":1,"score":17.2003,"file_path":"app/main.py","start_line":42,"end_line":95,"focus_line":42,"snippet_start_line":42,"snippet_end_line":95,"symbol_start_line":42,"symbol_end_line":62,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/main.py:function:lifespan","symbol_name":"lifespan","qualified_name":"lifespan","signature":"async def lifespan(app: FastAPI)","signals":["body","signature","all-query-terms","complete-symbol","contiguous-span"],"snippet":"async def lifespan(app: FastAPI):\\n    log.info(\\n        \\"service.starting\\",\\n        service=config.SERVICE_NAME,\\n        fix_enabled=config.FIX_ENABLED,\\n        pool_size=config.DB_POOL_SIZE,\\n        max_overflow=config.DB_MAX_OVERFLOW,\\n        pool_timeout=config.DB_POOL_TIMEOUT,\\n    )\\n    await db.ensure_schema_and_seed()\\n    app.state.http = httpx.AsyncClient()\\n    updater = asyncio.create_task(_pool_gauge_updater())\\n    try:\\n        yield\\n    finally:\\n        updater.cancel()\\n        with contextlib.suppress(asyncio.CancelledError):\\n            await updater\\n        await app.state.http.aclose()\\n        await db.engine.dispose()\\n        log.info(\\"service.stopped\\")\\n\\n\\napp = FastAPI(title=config.SERVICE_NAME, lifespan=lifespan)\\napp.add_middleware(ObservabilityMiddleware)\\n\\n\\n# --- Business endpoint (contains the injected fault) -----------------------\\n@app.get(\\"/widgets/{widget_id}\\")\\nasync def get_widget(widget_id: int, request: Request):\\n    client: httpx.AsyncClient = request.app.state.http\\n    try:\\n        if config.FIX_ENABLED:\\n            widget, computed, db_wait = await _handle_fixed(client, widget_id)\\n        else:\\n            widget, computed, db_wait = await _handle_buggy(client, widget_id)\\n    except SATimeoutError:\\n        # The pool is exhausted. Note the response is deliberately generic — from\\n        # the API alone you cannot tell the DB pool is the culprit (ADR 0002).\\n        metrics.DB_CHECKOUT_TIMEOUTS.inc()\\n        log.warning(\\"db.pool_checkout_timeout\\", widget_id=widget_id)\\n        raise HTTPException(status_code=503, detail=\\"Service temporarily unavailable\\")\\n\\n    if widget is None:\\n        raise HTTPException(status_code=404, detail=\\"widget not found\\")\\n\\n    log.info(\\"widget.served\\", widget_id=widget_id, db_wait_ms=db_wait)\\n    return {\\n        \\"id\\": widget[\\"id\\"],\\n        \\"name\\": widget[\\"name\\"],\\n        \\"price\\": float(widget[\\"price\\"]),\\n        \\"score\\": computed.get(\\"score\\"),\\n        \\"db_wait_ms\\": db_wait,\\n    }","merged_ranks":[1,5]},{"rank":2,"score":10.576,"file_path":"app/downstream.py","start_line":1,"end_line":9,"focus_line":3,"snippet_start_line":1,"snippet_end_line":6,"language":"Python","signals":["body","all-query-terms"],"snippet":"\\"\\"\\"Client for the slow downstream dependency (the simulated external API).\\n\\nThe request_id is propagated via the X-Request-ID header so a single request can\\nbe traced across the service boundary (ADR 0003).\\n\\"\\"\\"\\nfrom __future__ import annotations","comment_focus_line":1},{"rank":3,"score":10.3204,"file_path":"app/metrics.py","start_line":41,"end_line":55,"focus_line":50,"snippet_start_line":47,"snippet_end_line":52,"language":"Python","signals":["body","all-query-terms"],"snippet":")\\n\\n# Downstream latency — to exonerate or implicate the slow external API.\\nDOWNSTREAM_DURATION = Histogram(\\n    \\"downstream_request_duration_seconds\\",\\n    \\"Latency of the downstream dependency call\\",","comment_focus_line":49},{"rank":4,"score":9.9395,"file_path":"app/config.py","start_line":35,"end_line":51,"focus_line":44,"snippet_start_line":41,"snippet_end_line":46,"language":"Python","signals":["body","all-query-terms"],"snippet":"DB_POOL_TIMEOUT: float = _get_float(\\"DB_POOL_TIMEOUT\\", 5.0)\\n\\n# --- Downstream (the slow external API) -----------------------------------\\nDOWNSTREAM_URL: str = os.getenv(\\"DOWNSTREAM_URL\\", \\"http://localhost:9000\\")\\nDOWNSTREAM_TIMEOUT: float = _get_float(\\"DOWNSTREAM_TIMEOUT\\", 5.0)\\n","comment_focus_line":43},{"rank":5,"score":9.0606,"file_path":"observability/grafana/provisioning/dashboards/dashboards.yml","start_line":1,"end_line":2,"focus_line":1,"snippet_start_line":1,"snippet_end_line":2,"symbol_start_line":1,"symbol_end_line":2,"language":"YAML","kind":"section","symbol_id":"local/unreliable-blind:YAML:observability/grafana/provisioning/dashboards/dashboards.yml:section:apiVersion","symbol_name":"apiVersion","qualified_name":"apiVersion","signature":"section apiVersion","signals":["body","symbol-name","all-query-terms","data-prior"],"section":"docs-and-fixtures","snippet":"apiVersion: 1\\n"},{"rank":6,"score":10.7515,"file_path":"downstream/main.py","start_line":1,"end_line":24,"focus_line":3,"snippet_start_line":2,"snippet_end_line":3,"language":"Python","signals":["body","all-query-terms"],"snippet":"\\nResponds correctly but with realistic, variable latency (~300-800ms, with","comment_focus_line":1},{"rank":7,"score":6.6641,"file_path":"app/db.py","start_line":63,"end_line":90,"focus_line":63,"snippet_start_line":63,"snippet_end_line":64,"symbol_start_line":63,"symbol_end_line":90,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/db.py:function:ensure_schema_and_seed","symbol_name":"ensure_schema_and_seed","qualified_name":"ensure_schema_and_seed","signature":"async def ensure_schema_and_seed() -> None","signals":["graph:calls","graph:outgoing"],"snippet":"async def ensure_schema_and_seed() -> None:\\n    \\"\\"\\"Idempotently create the widgets table and seed it."}],"verify_command":{"command":"python -m py_compile app/main.py","targets":"app/main.py","derived_from":"build check only - no runnable test command derivable; this parses the file, it'}], 'coverage': 'entire'}
+```
+
+### Metadata
+```
+{
+  "tool_name": "repo"
+}
+```
+
+## 5. repo
+- Span ID: ef5654084711d14f
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:27:36.483Z
+- Updated: 2026-10-10T13:27:36.732Z
+
+### Input
+```
+{
+  "action": "search",
+  "query": "/compute",
+  "symbol": ""
+}
+```
+
+### Output
+```
+{'hits': [{'source': 'entire_graph', 'command': 'search', 'text': '{"query":"/compute","repo_root":"/home/aarush_linux/projects/neathacks/integration/targets/unreliable-blind","commit":"252fabbd9275f870c04b4a1cb6c22f546d05302b","tree":"12d0be3ce635c70d6a8c84a8d0abe220bdab7579","profile":"full","results":[{"rank":1,"score":43.2855,"file_path":"downstream/main.py","start_line":25,"end_line":31,"focus_line":25,"snippet_start_line":25,"snippet_end_line":31,"symbol_start_line":25,"symbol_end_line":31,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:downstream/main.py:function:compute","symbol_name":"compute","qualified_name":"compute","signature":"async def compute(widget_id: int)","signals":["body","exact-symbol","symbol-name","all-query-terms","complete-symbol"],"snippet":"async def compute(widget_id: int):\\n    delay = BASE_MS + random.uniform(0, JITTER_MS)\\n    if random.random() < SPIKE_PROB:\\n        delay += SPIKE_MS\\n    await asyncio.sleep(delay / 1000.0)\\n    # A deterministic-ish \\"score\\" so the response is meaningful.\\n    return {\\"widget_id\\": widget_id, \\"score\\": (widget_id * 37) % 100, \\"delay_ms\\": round(delay, 1)}"},{"rank":2,"score":36.7927,"file_path":"downstream/main.py","start_line":32,"end_line":36,"focus_line":35,"snippet_start_line":32,"snippet_end_line":36,"symbol_start_line":35,"symbol_end_line":36,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:downstream/main.py:function:healthz","symbol_name":"healthz","qualified_name":"healthz","signature":"async def healthz()","signals":["same-container-neighbor"],"snippet":"\\n\\n@app.get(\\"/healthz\\")\\nasync def healthz():\\n    return {\\"status\\": \\"ok\\"}"},{"rank":3,"score":17.5993,"file_path":"app/downstream.py","start_line":17,"end_line":33,"focus_line":23,"snippet_start_line":17,"snippet_end_line":33,"symbol_start_line":17,"symbol_end_line":33,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/downstream.py:function:call_downstream","symbol_name":"call_downstream","qualified_name":"call_downstream","signature":"async def call_downstream(client: httpx.AsyncClient, widget_id: int) -> dict","signals":["body","all-query-terms","graph:callers","complete-symbol"],"snippet":"async def call_downstream(client: httpx.AsyncClient, widget_id: int) -> dict:\\n    t0 = time.perf_counter()\\n    with tracer.start_as_current_span(\\"downstream.call\\") as span:\\n        span.set_attribute(\\"widget_id\\", widget_id)\\n        try:\\n            resp = await client.get(\\n                f\\"{config.DOWNSTREAM_URL}/compute\\",\\n                params={\\"widget_id\\": widget_id},\\n                headers={\\"X-Request-ID\\": get_request_id() or \\"\\"},\\n                timeout=config.DOWNSTREAM_TIMEOUT,\\n            )\\n            resp.raise_for_status()\\n            return resp.json()\\n        finally:\\n            dur = time.perf_counter() - t0\\n            span.set_attribute(\\"duration_ms\\", round(dur * 1000, 2))\\n            metrics.DOWNSTREAM_DURATION.observe(dur)"},{"rank":4,"score":10.9522,"file_path":"downstream/main.py","start_line":16,"end_line":24,"focus_line":24,"snippet_start_line":19,"snippet_end_line":24,"language":"Python","signals":["body","all-query-terms"],"snippet":"SPIKE_MS = int(os.getenv(\\"DOWNSTREAM_SPIKE_MS\\", \\"1500\\"))\\n\\napp = FastAPI(title=\\"downstream-stub\\")\\n\\n\\n@app.get(\\"/compute\\")"},{"rank":5,"score":2.4551,"file_path":"app/context.py","start_line":13,"end_line":14,"focus_line":13,"snippet_start_line":13,"snippet_end_line":14,"symbol_start_line":13,"symbol_end_line":14,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/context.py:function:get_request_id","symbol_name":"get_request_id","qualified_name":"get_request_id","signature":"def get_request_id() -> str | None","signals":["graph:calls","graph:outgoing","reference-decl-prior","boilerplate-prior"],"snippet":"def get_request_id() -> str | None:\\n    return _request_id.get()"},{"rank":6,"score":6.8198,"file_path":"app/main.py","start_line":98,"end_line":105,"focus_line":98,"snippet_start_line":98,"snippet_end_line":99,"symbol_start_line":98,"symbol_end_line":105,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/main.py:function:_handle_buggy","symbol_name":"_handle_buggy","qualified_name":"_handle_buggy","signature":"async def _handle_buggy(client, widget_id)","signals":["graph:calls","graph:incoming"],"snippet":"async def _handle_buggy(client, widget_id):\\n    \\"\\"\\"BUGGY PATH (ADR 0002): the DB connection is held across the slow call.\\"\\"\\""},{"rank":7,"score":0,"file_path":"app/main.py","start_line":137,"end_line":139,"focus_line":137,"snippet_start_line":137,"snippet_end_line":137,"kind":"function","qualified_name":"healthz","signals":["related:near-dupe"],"section":"related","snippet":"async def healthz():"},{"rank":8,"score":0,"file_path":"app/context.py","start_line":9,"end_line":10,"focus_line":9,"snippet_start_line":9,"snippet_end_line":9,"kind":"function","qualified_name":"set_request_id","signals":["related:sibling"],"section":"related","snippet":"def set_request_id(value: str) -> None:"}],"verify_command":{"command":"python -m py_compile downstream/main.py","targets":"downstream/main.py","derived_from":"build check only - no runnable test command derivable; this parses the file, it runs no tests","tier":"build-check"},"stats":{"files_scanned":20,"preselection_backend":"inventory","preselection_passes":1,"preselection_files_examined":20,"files_content_read_during_preselection":0,"files_content_read_during_query":20,"bytes_content_read_during_query":28479,"files_indexed":20,"symbols_considered":62,"lexical_candidates":3,"graph_candidates":3,"caller_boosted_candidates":1,"same_container_neighbor_candidates":1,"sparse_candidates":0,"sparse_files_content_read":0,"candidates_selected":8,"result_bytes":4906,"context_budget_bytes":24576,"snippets_truncated_by_budget":2,"complete_symbol_snippets":2,"locator_snippets":2,"related_sites":2,"verify_command_bytes":399,"v'}], 'coverage': 'entire'}
+```
+
+### Metadata
+```
+{
+  "tool_name": "repo"
+}
+```
+
+## 6. repo
+- Span ID: 5d128602169451ad
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:27:36.483Z
+- Updated: 2026-10-10T13:27:36.737Z
+
+### Input
+```
+{
+  "action": "search",
+  "query": "main.py",
+  "symbol": ""
+}
+```
+
+### Output
+```
+{'hits': [{'source': 'entire_graph', 'command': 'search', 'text': '{"query":"main.py","repo_root":"/home/aarush_linux/projects/neathacks/integration/targets/unreliable-blind","commit":"252fabbd9275f870c04b4a1cb6c22f546d05302b","tree":"12d0be3ce635c70d6a8c84a8d0abe220bdab7579","profile":"full","results":[{"rank":1,"score":15.3709,"file_path":"app/main.py","start_line":120,"end_line":127,"focus_line":120,"snippet_start_line":120,"snippet_end_line":127,"symbol_start_line":120,"symbol_end_line":127,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/main.py:function:_load_widget","symbol_name":"_load_widget","qualified_name":"_load_widget","signature":"async def _load_widget(session, widget_id: int)","signals":["path","graph:callers","complete-symbol"],"snippet":"async def _load_widget(session, widget_id: int):\\n    row = (\\n        await session.execute(\\n            text(\\"SELECT id, name, price FROM widgets WHERE id = :id\\"),\\n            {\\"id\\": widget_id},\\n        )\\n    ).mappings().first()\\n    return dict(row) if row else None"},{"rank":2,"score":15.3709,"file_path":"app/main.py","start_line":130,"end_line":132,"focus_line":130,"snippet_start_line":130,"snippet_end_line":132,"symbol_start_line":130,"symbol_end_line":132,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/main.py:function:_record_access","symbol_name":"_record_access","qualified_name":"_record_access","signature":"async def _record_access(session, widget_id: int) -> None: # Represents the second DB interaction after the downstream call.","signals":["path","graph:callers"],"snippet":"async def _record_access(session, widget_id: int) -> None:\\n    # Represents the second DB interaction after the downstream call.\\n    await session.execute(text(\\"SELECT 1\\"))"},{"rank":3,"score":13.85,"file_path":"app/main.py","start_line":30,"end_line":38,"focus_line":30,"snippet_start_line":30,"snippet_end_line":38,"symbol_start_line":30,"symbol_end_line":38,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/main.py:function:_pool_gauge_updater","symbol_name":"_pool_gauge_updater","qualified_name":"_pool_gauge_updater","signature":"async def _pool_gauge_updater() -> None","signals":["path","graph:callers","complete-symbol"],"snippet":"async def _pool_gauge_updater() -> None:\\n    \\"\\"\\"Continuously publish pool state to Prometheus (ADR 0003, the key signal).\\"\\"\\"\\n    while True:\\n        stats = db.pool_stats()\\n        metrics.DB_POOL_CONNECTIONS.labels(\\"size\\").set(stats[\\"size\\"])\\n        metrics.DB_POOL_CONNECTIONS.labels(\\"checked_out\\").set(stats[\\"checked_out\\"])\\n        metrics.DB_POOL_CONNECTIONS.labels(\\"available\\").set(stats[\\"available\\"])\\n        metrics.DB_POOL_CONNECTIONS.labels(\\"overflow\\").set(stats[\\"overflow\\"])\\n        await asyncio.sleep(1.0)"},{"rank":4,"score":5.77,"file_path":"app/downstream.py","start_line":17,"end_line":33,"focus_line":17,"snippet_start_line":17,"snippet_end_line":33,"symbol_start_line":17,"symbol_end_line":33,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/downstream.py:function:call_downstream","symbol_name":"call_downstream","qualified_name":"call_downstream","signature":"async def call_downstream(client: httpx.AsyncClient, widget_id: int) -> dict","signals":["graph:calls","graph:outgoing","complete-symbol"],"snippet":"async def call_downstream(client: httpx.AsyncClient, widget_id: int) -> dict:\\n    t0 = time.perf_counter()\\n    with tracer.start_as_current_span(\\"downstream.call\\") as span:\\n        span.set_attribute(\\"widget_id\\", widget_id)\\n        try:\\n            resp = await client.get(\\n                f\\"{config.DOWNSTREAM_URL}/compute\\",\\n                params={\\"widget_id\\": widget_id},\\n                headers={\\"X-Request-ID\\": get_request_id() or \\"\\"},\\n                timeout=config.DOWNSTREAM_TIMEOUT,\\n            )\\n            resp.raise_for_status()\\n            return resp.json()\\n        finally:\\n            dur = time.perf_counter() - t0\\n            span.set_attribute(\\"duration_ms\\", round(dur * 1000, 2))\\n            metrics.DOWNSTREAM_DURATION.observe(dur)"},{"rank":5,"score":5.726,"file_path":"app/db.py","start_line":37,"end_line":60,"focus_line":37,"snippet_start_line":37,"snippet_end_line":60,"symbol_start_line":37,"symbol_end_line":60,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/db.py:function:acquire_session","symbol_name":"acquire_session","qualified_name":"acquire_session","signature":"async def acquire_session() -> AsyncIterator[AsyncSession]","signals":["graph:calls","graph:outgoing","complete-symbol"],"snippet":"async def acquire_session() -> AsyncIterator[AsyncSession]:\\n    \\"\\"\\"Open a session AND force the connection checkout eagerly, timing the wait.\\n\\n    SQLAlchemy checks a connection out of the pool lazily (on first query). We\\n    force it here with `session.connection()` so we can measure exactly how long\\n    a request blocks waiting for the pool — the `db_wait_ms` in ADR 0003. When\\n    the pool is exhausted, this is where the request parks and, after\\n    `pool_timeout`, where the TimeoutError is raised.\\n    \\"\\"\\"\\n    session = SessionLocal()\\n    t0 = time.perf_counter()\\n    try:\\n        # The db.checkout span captures exactly the time spent waiting for the\\n        # pool. Under exhaustion its duration balloons — the trace-level smoking gun.\\n        with tracer.start_as_current_span(\\"db.checkout\\") as span:\\n            await session.connection()  # <-- pool checkout happens here\\n            wait = time.perf_counter() - t0\\n            span.set_attribute(\\"db.wait_ms\\", round(wait * 1000, 2))\\n        metrics.DB_CHECKOUT_WAIT.observe(wait)\\n        # Stash the measured wait on the session for the handler/logs to read.\\n        session.info[\\"db_wait_ms\\"] = round(wait * 1000, 2)\\n        yield session\\n    finally:\\n        await session.close()"},{"rank":6,"score":11.25,"file_path":"downstream/main.py","st'}], 'coverage': 'entire'}
+```
+
+### Metadata
+```
+{
+  "tool_name": "repo"
+}
+```
+
+## 7. repo
+- Span ID: dded703ffb129454
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:27:36.483Z
+- Updated: 2026-10-10T13:27:36.746Z
+
+### Input
+```
+{
+  "action": "search",
+  "query": "/widgets",
+  "symbol": ""
+}
+```
+
+### Output
+```
+{'hits': [{'source': 'entire_graph', 'command': 'search', 'text': '{"query":"/widgets","repo_root":"/home/aarush_linux/projects/neathacks/integration/targets/unreliable-blind","commit":"252fabbd9275f870c04b4a1cb6c22f546d05302b","tree":"12d0be3ce635c70d6a8c84a8d0abe220bdab7579","profile":"full","results":[{"rank":1,"score":43.1196,"file_path":"db/init.sql","start_line":1,"end_line":8,"focus_line":4,"snippet_start_line":1,"snippet_end_line":6,"symbol_start_line":4,"symbol_end_line":8,"language":"SQL","kind":"table","symbol_id":"local/unreliable-blind:SQL:db/init.sql:table:widgets","symbol_name":"widgets","qualified_name":"widgets","signature":"CREATE TABLE IF NOT EXISTS widgets ( id SERIAL PRIMARY KEY, name TEXT NOT NULL, price NUMERIC(10, 2) NOT NULL )","signals":["body","exact-symbol","symbol-name","all-query-terms"],"snippet":"-- Bootstrap schema + seed data for the widget service.\\n-- The app also does this idempotently on startup (see app/db.py), so this file\\n-- is belt-and-suspenders for the Postgres container\'s first boot.\\nCREATE TABLE IF NOT EXISTS widgets (\\n    id    SERIAL PRIMARY KEY,\\n    name  TEXT NOT NULL,"},{"rank":2,"score":32.6711,"file_path":"app/main.py","start_line":98,"end_line":127,"focus_line":123,"snippet_start_line":98,"snippet_end_line":127,"symbol_start_line":120,"symbol_end_line":127,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/main.py:function:_load_widget","symbol_name":"_load_widget","qualified_name":"_load_widget","signature":"async def _load_widget(session, widget_id: int)","signals":["body","symbol-name","all-query-terms","graph:callers","complete-symbol","contiguous-span"],"snippet":"async def _handle_buggy(client, widget_id):\\n    \\"\\"\\"BUGGY PATH (ADR 0002): the DB connection is held across the slow call.\\"\\"\\"\\n    async with db.acquire_session() as session:\\n        widget = await _load_widget(session, widget_id)\\n        # The connection is STILL checked out while we await the slow downstream.\\n        computed = await call_downstream(client, widget_id)\\n        await _record_access(session, widget_id)\\n        return widget, computed, session.info.get(\\"db_wait_ms\\")\\n\\n\\nasync def _handle_fixed(client, widget_id):\\n    \\"\\"\\"FIXED PATH: release the connection before the slow call, reacquire after.\\"\\"\\"\\n    async with db.acquire_session() as session:\\n        widget = await _load_widget(session, widget_id)\\n        db_wait = session.info.get(\\"db_wait_ms\\")\\n    # Connection is back in the pool. The slow call holds no DB resource.\\n    computed = await call_downstream(client, widget_id)\\n    async with db.acquire_session() as session:\\n        await _record_access(session, widget_id)\\n    return widget, computed, db_wait\\n\\n\\nasync def _load_widget(session, widget_id: int):\\n    row = (\\n        await session.execute(\\n            text(\\"SELECT id, name, price FROM widgets WHERE id = :id\\"),\\n            {\\"id\\": widget_id},\\n        )\\n    ).mappings().first()\\n    return dict(row) if row else None","merged_ranks":[2,3,4]},{"rank":3,"score":20.0855,"file_path":"app/middleware.py","start_line":69,"end_line":73,"focus_line":71,"snippet_start_line":69,"snippet_end_line":73,"symbol_start_line":69,"symbol_end_line":73,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/middleware.py:function:_normalize_route","symbol_name":"_normalize_route","qualified_name":"_normalize_route","signature":"def _normalize_route(path: str) -> str: # Keep the metric route labels bounded regardless of the widget id.","signals":["body","signature","all-query-terms","graph:callers"],"snippet":"def _normalize_route(path: str) -> str:\\n    # Keep the metric route labels bounded regardless of the widget id.\\n    if path.startswith(\\"/widgets/\\"):\\n        return \\"/widgets/{id}\\"\\n    return path"},{"rank":4,"score":17.5555,"file_path":"app/db.py","start_line":63,"end_line":90,"focus_line":66,"snippet_start_line":65,"snippet_end_line":66,"symbol_start_line":63,"symbol_end_line":90,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/db.py:function:ensure_schema_and_seed","symbol_name":"ensure_schema_and_seed","qualified_name":"ensure_schema_and_seed","signature":"async def ensure_schema_and_seed() -> None","signals":["body","all-query-terms","graph:callers"],"snippet":"\\n    Makes the app runnable against a bare Postgres even without the init.sql","comment_focus_line":64},{"rank":5,"score":14.9222,"file_path":"app/db.py","start_line":91,"end_line":96,"focus_line":93,"snippet_start_line":92,"snippet_end_line":93,"symbol_start_line":93,"symbol_end_line":101,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/db.py:function:pool_stats","symbol_name":"pool_stats","qualified_name":"pool_stats","signature":"def pool_stats() -> dict[str, int]","signals":["same-container-neighbor"],"snippet":"\\ndef pool_stats() -> dict[str, int]:"},{"rank":6,"score":12.1056,"file_path":"app/downstream.py","start_line":17,"end_line":33,"focus_line":17,"snippet_start_line":17,"snippet_end_line":18,"symbol_start_line":17,"symbol_end_line":33,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/downstream.py:function:call_downstream","symbol_name":"call_downstream","qualified_name":"call_downstream","signature":"async def call_downstream(client: httpx.AsyncClient, widget_id: int) -> dict","signals":["body","signature","graph:callers"],"snippet":"async def call_downstream(client: httpx.AsyncClient, widget_id: int) -> dict:\\n    t0 = time.perf_counter()"}],"verify_command":{"command":"none derivable (no build manifest found) - syntax-check the file you edited and stop.","targets":"db/init.sql","derived_from":"no manifest, no test file, no single-file checker for this language","tier":"none"},"stats":{"files_scanned":20,"preselection_backend":"inventory","preselection_passes":1,"preselection_files_examined":20,"files_content_read_during_preselection":0,"files_content_read_during_query":20,"bytes_content'}], 'coverage': 'entire'}
+```
+
+### Metadata
+```
+{
+  "tool_name": "repo"
+}
+```
+
+## 8. read\_file
+- Span ID: 5dc6277faafc8d69
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:27:40.041Z
+- Updated: 2026-10-10T13:27:40.050Z
+
+### Input
+```
+{
+  "path": "app/main.py",
+  "start_line": 1,
+  "end_line": 145
+}
+```
+
+### Output
+```
+{'path': 'app/main.py', 'start_line': 1, 'end_line': 145, 'snippet': '1:"""Widget service — FastAPI application.\n2:\n3:Exposes the business endpoint that contains the injected fault (ADR 0002) plus\n4:the observability surface (ADR 0003). The fault is toggled by config.FIX_ENABLED\n5:so the same binary demonstrates both the broken and fixed behaviour.\n6:"""\n7:from __future__ import annotations\n8:\n9:import asyncio\n10:import contextlib\n11:from contextlib import asynccontextmanager\n12:\n13:import httpx\n14:from fastapi import FastAPI, HTTPException, Request, Response\n15:from prometheus_client import CONTENT_TYPE_LATEST, generate_latest\n16:from sqlalchemy import text\n17:from sqlalchemy.exc import TimeoutError as SATimeoutError\n18:\n19:from . import config, db, metrics\n20:from .downstream import call_downstream\n21:from .logging_conf import configure_logging, get_logger\n22:from .middleware import ObservabilityMiddleware\n23:from .tracing import configure_tracing\n24:\n25:configure_logging()\n26:configure_tracing()\n27:log = get_logger()\n28:\n29:\n30:async def _pool_gauge_updater() -> None:\n31:    """Continuously publish pool state to Prometheus (ADR 0003, the key signal)."""\n32:    while True:\n33:        stats = db.pool_stats()\n34:        metrics.DB_POOL_CONNECTIONS.labels("size").set(stats["size"])\n35:        metrics.DB_POOL_CONNECTIONS.labels("checked_out").set(stats["checked_out"])\n36:        metrics.DB_POOL_CONNECTIONS.labels("available").set(stats["available"])\n37:        metrics.DB_POOL_CONNECTIONS.labels("overflow").set(stats["overflow"])\n38:        await asyncio.sleep(1.0)\n39:\n40:\n41:@asynccontextmanager\n42:async def lifespan(app: FastAPI):\n43:    log.info(\n44:        "service.starting",\n45:        service=config.SERVICE_NAME,\n46:        fix_enabled=config.FIX_ENABLED,\n47:        pool_size=config.DB_POOL_SIZE,\n48:        max_overflow=config.DB_MAX_OVERFLOW,\n49:        pool_timeout=config.DB_POOL_TIMEOUT,\n50:    )\n51:    await db.ensure_schema_and_seed()\n52:    app.state.http = httpx.AsyncClient()\n53:    updater = asyncio.create_task(_pool_gauge_updater())\n54:    try:\n55:        yield\n56:    finally:\n57:        updater.cancel()\n58:        with contextlib.suppress(asyncio.CancelledError):\n59:            await updater\n60:        await app.state.http.aclose()\n61:        await db.engine.dispose()\n62:        log.info("service.stopped")\n63:\n64:\n65:app = FastAPI(title=config.SERVICE_NAME, lifespan=lifespan)\n66:app.add_middleware(ObservabilityMiddleware)\n67:\n68:\n69:# --- Business endpoint (contains the injected fault) -----------------------\n70:@app.get("/widgets/{widget_id}")\n71:async def get_widget(widget_id: int, request: Request):\n72:    client: httpx.AsyncClient = request.app.state.http\n73:    try:\n74:        if config.FIX_ENABLED:\n75:            widget, computed, db_wait = await _handle_fixed(client, widget_id)\n76:        else:\n77:            widget, computed, db_wait = await _handle_buggy(client, widget_id)\n78:    except SATimeoutError:\n79:        # The pool is exhausted. Note the response is deliberately generic — from\n80:        # the API alone you cannot tell the DB pool is the culprit (ADR 0002).\n81:        metrics.DB_CHECKOUT_TIMEOUTS.inc()\n82:        log.warning("db.pool_checkout_timeout", widget_id=widget_id)\n83:        raise HTTPException(status_code=503, detail="Service temporarily unavailable")\n84:\n85:    if widget is None:\n86:        raise HTTPException(status_code=404, detail="widget not found")\n87:\n88:    log.info("widget.served", widget_id=widget_id, db_wait_ms=db_wait)\n89:    return {\n90:        "id": widget["id"],\n91:        "name": widget["name"],\n92:        "price": float(widget["price"]),\n93:        "score": computed.get("score"),\n94:        "db_wait_ms": db_wait,\n95:    }\n96:\n97:\n98:async def _handle_buggy(client, widget_id):\n99:    """BUGGY PATH (ADR 0002): the DB connection is held across the slow call."""\n100:    async with db.acquire_session() as session:\n101:        widget = await _load_widget(session, widget_id)\n102:        # The connection is STILL checked out while we await the slow downstream.\n103:        computed = await call_downstream(client, widget_id)\n104:        await _record_access(session, widget_id)\n105:        return widget, computed, session.info.get("db_wait_ms")\n106:\n107:\n108:async def _handle_fixed(client, widget_id):\n109:    """FIXED PATH: release the connection before the slow call, reacquire after."""\n110:    async with db.acquire_session() as session:\n111:        widget = await _load_widget(session, widget_id)\n112:        db_wait = session.info.get("db_wait_ms")\n113:    # Connection is back in the pool. The slow call holds no DB resource.\n114:    computed = await call_downstream(client, widget_id)\n115:    async with db.acquire_session() as session:\n116:        await _record_access(session, widget_id)\n117:    return widget, computed, db_wait\n118:\n119:\n120:async def _load_widget(session, widget_id: int):\n121:    row = (\n122:        await session.execute(\n123:            text("SELECT id, name, price FROM widgets WHERE id = :id"),\n124:            {"id": widget_id},\n125:        )\n126:    ).mappings().first()\n127:    return dict(row) if row else None\n128:\n129:\n130:async def _record_access(session, widget_id: int) -> None:\n131:    # Represents the second DB interaction after the downstream call.\n132:    await session.execute(text("SELECT 1"))\n133:\n134:\n135:# --- Observability endpoints ----------------------------------------------\n136:@app.get("/healthz")\n137:async def healthz():\n138:    """Liveness: the process/event loop is responsive. No dependencies touched."""\n139:    return {"status": "ok"}\n140:\n141:\n142:@app.get("/readyz")\n143:async def readyz():\n144:    """Readiness: can we actually get a DB connection and round-trip a query?\n145:', 'evidence_id': 'ev-read-2'}
+```
+
+### Metadata
+```
+{
+  "tool_name": "read_file"
+}
+```
+
+## 9. read\_file
+- Span ID: 3ae8da8f7d07eec5
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:27:40.042Z
+- Updated: 2026-10-10T13:27:40.050Z
+
+### Input
+```
+{
+  "path": "app/config.py",
+  "start_line": 1,
+  "end_line": 60
+}
+```
+
+### Output
+```
+{'path': 'app/config.py', 'start_line': 1, 'end_line': 57, 'snippet': '1:"""Runtime configuration, read from environment variables.\n2:\n3:Kept intentionally simple (plain os.getenv) so there is no hidden magic — every\n4:knob that shapes the failure or the fix is visible here.\n5:"""\n6:from __future__ import annotations\n7:\n8:import os\n9:\n10:\n11:def _get_bool(name: str, default: bool) -> bool:\n12:    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}\n13:\n14:\n15:def _get_int(name: str, default: int) -> int:\n16:    try:\n17:        return int(os.getenv(name, str(default)))\n18:    except ValueError:\n19:        return default\n20:\n21:\n22:def _get_float(name: str, default: float) -> float:\n23:    try:\n24:        return float(os.getenv(name, str(default)))\n25:    except ValueError:\n26:        return default\n27:\n28:\n29:# --- Database -------------------------------------------------------------\n30:DATABASE_URL: str = os.getenv(\n31:    "DATABASE_URL",\n32:    "REDACTED",\n33:)\n34:\n35:# The bounded resource we deliberately break in ADR 0002. Small on purpose so\n36:# the failure reproduces with modest load.\n37:DB_POOL_SIZE: int = _get_int("DB_POOL_SIZE", 5)\n38:DB_MAX_OVERFLOW: int = _get_int("DB_MAX_OVERFLOW", 0)\n39:# How long a request will block waiting to check out a connection before the\n40:# pool raises a TimeoutError. Kept modest so a saturated pool fails "loudly".\n41:DB_POOL_TIMEOUT: float = _get_float("DB_POOL_TIMEOUT", 5.0)\n42:\n43:# --- Downstream (the slow external API) -----------------------------------\n44:DOWNSTREAM_URL: str = os.getenv("DOWNSTREAM_URL", "http://localhost:9000")\n45:DOWNSTREAM_TIMEOUT: float = _get_float("DOWNSTREAM_TIMEOUT", 5.0)\n46:\n47:# --- The fault toggle -----------------------------------------------------\n48:# FIX_ENABLED=false  -> the buggy code path (connection held across the slow\n49:#                       downstream call) described in ADR 0002.\n50:# FIX_ENABLED=true   -> the fixed code path (connection released before the\n51:#                       downstream call).\n52:# Same binary, one switch, so the before/after demo is honest.\n53:FIX_ENABLED: bool = _get_bool("FIX_ENABLED", False)\n54:\n55:# --- Misc -----------------------------------------------------------------\n56:SERVICE_NAME: str = os.getenv("SERVICE_NAME", "widget-service")\n57:LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")', 'evidence_id': 'ev-read-1'}
+```
+
+### Metadata
+```
+{
+  "tool_name": "read_file"
+}
+```
+
+## 10. read\_file
+- Span ID: 9bf7a1652df5a20b
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:27:40.043Z
+- Updated: 2026-10-10T13:27:40.051Z
+
+### Input
+```
+{
+  "path": "downstream/main.py",
+  "start_line": 1,
+  "end_line": 40
+}
+```
+
+### Output
+```
+{'path': 'downstream/main.py', 'start_line': 1, 'end_line': 36, 'snippet': '1:"""Simulated slow external API (the downstream dependency).\n2:\n3:Responds correctly but with realistic, variable latency (~300-800ms, with\n4:occasional spikes). It is healthy and fast enough on its own — the failure in\n5:the widget-service comes from *holding a DB connection while waiting on this*,\n6:not from this service being broken.\n7:"""\n8:from __future__ import annotations\n9:\n10:import asyncio\n11:import os\n12:import random\n13:\n14:from fastapi import FastAPI\n15:\n16:BASE_MS = int(os.getenv("DOWNSTREAM_BASE_MS", "300"))\n17:JITTER_MS = int(os.getenv("DOWNSTREAM_JITTER_MS", "500"))\n18:SPIKE_PROB = float(os.getenv("DOWNSTREAM_SPIKE_PROB", "0.05"))\n19:SPIKE_MS = int(os.getenv("DOWNSTREAM_SPIKE_MS", "1500"))\n20:\n21:app = FastAPI(title="downstream-stub")\n22:\n23:\n24:@app.get("/compute")\n25:async def compute(widget_id: int):\n26:    delay = BASE_MS + random.uniform(0, JITTER_MS)\n27:    if random.random() < SPIKE_PROB:\n28:        delay += SPIKE_MS\n29:    await asyncio.sleep(delay / 1000.0)\n30:    # A deterministic-ish "score" so the response is meaningful.\n31:    return {"widget_id": widget_id, "score": (widget_id * 37) % 100, "delay_ms": round(delay, 1)}\n32:\n33:\n34:@app.get("/healthz")\n35:async def healthz():\n36:    return {"status": "ok"}', 'evidence_id': 'ev-read-4'}
+```
+
+### Metadata
+```
+{
+  "tool_name": "read_file"
+}
+```
+
+## 11. read\_file
+- Span ID: be188fb9089668dd
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:27:40.043Z
+- Updated: 2026-10-10T13:27:40.051Z
+
+### Input
+```
+{
+  "path": "app/db.py",
+  "start_line": 1,
+  "end_line": 110
+}
+```
+
+### Output
+```
+{'path': 'app/db.py', 'start_line': 1, 'end_line': 101, 'snippet': '1:"""Database engine, session factory, and pool instrumentation.\n2:\n3:The engine\'s connection pool is bounded (`pool_size`, `max_overflow`,\n4:`pool_timeout` from config). That bound is the resource ADR 0002 exhausts.\n5:"""\n6:from __future__ import annotations\n7:\n8:import time\n9:from contextlib import asynccontextmanager\n10:from typing import AsyncIterator\n11:\n12:from sqlalchemy import text\n13:from sqlalchemy.ext.asyncio import (\n14:    AsyncSession,\n15:    async_sessionmaker,\n16:    create_async_engine,\n17:)\n18:\n19:from . import config, metrics\n20:from .logging_conf import get_logger\n21:from .tracing import tracer\n22:\n23:log = get_logger()\n24:\n25:engine = create_async_engine(\n26:    config.DATABASE_URL,\n27:    pool_size=config.DB_POOL_SIZE,\n28:    max_overflow=config.DB_MAX_OVERFLOW,\n29:    pool_timeout=config.DB_POOL_TIMEOUT,\n30:    pool_pre_ping=True,\n31:)\n32:\n33:SessionLocal = async_sessionmaker(engine, expire_on_commit=False)\n34:\n35:\n36:@asynccontextmanager\n37:async def acquire_session() -> AsyncIterator[AsyncSession]:\n38:    """Open a session AND force the connection checkout eagerly, timing the wait.\n39:\n40:    SQLAlchemy checks a connection out of the pool lazily (on first query). We\n41:    force it here with `session.connection()` so we can measure exactly how long\n42:    a request blocks waiting for the pool — the `db_wait_ms` in ADR 0003. When\n43:    the pool is exhausted, this is where the request parks and, after\n44:    `pool_timeout`, where the TimeoutError is raised.\n45:    """\n46:    session = SessionLocal()\n47:    t0 = time.perf_counter()\n48:    try:\n49:        # The db.checkout span captures exactly the time spent waiting for the\n50:        # pool. Under exhaustion its duration balloons — the trace-level smoking gun.\n51:        with tracer.start_as_current_span("db.checkout") as span:\n52:            await session.connection()  # <-- pool checkout happens here\n53:            wait = time.perf_counter() - t0\n54:            span.set_attribute("db.wait_ms", round(wait * 1000, 2))\n55:        metrics.DB_CHECKOUT_WAIT.observe(wait)\n56:        # Stash the measured wait on the session for the handler/logs to read.\n57:        session.info["db_wait_ms"] = round(wait * 1000, 2)\n58:        yield session\n59:    finally:\n60:        await session.close()\n61:\n62:\n63:async def ensure_schema_and_seed() -> None:\n64:    """Idempotently create the widgets table and seed it.\n65:\n66:    Makes the app runnable against a bare Postgres even without the init.sql\n67:    bootstrap, so `docker compose up` and a local run behave identically.\n68:    """\n69:    async with engine.begin() as conn:\n70:        await conn.execute(\n71:            text(\n72:                """\n73:                CREATE TABLE IF NOT EXISTS widgets (\n74:                    id    SERIAL PRIMARY KEY,\n75:                    name  TEXT NOT NULL,\n76:                    price NUMERIC(10, 2) NOT NULL\n77:                )\n78:                """\n79:            )\n80:        )\n81:        count = (await conn.execute(text("SELECT COUNT(*) FROM widgets"))).scalar_one()\n82:        if count == 0:\n83:            await conn.execute(\n84:                text(\n85:                    "INSERT INTO widgets (name, price) "\n86:                    "SELECT \'widget-\' || g, (g * 1.5)::numeric "\n87:                    "FROM generate_series(1, 100) AS g"\n88:                )\n89:            )\n90:            log.info("db.seeded", rows=100)\n91:\n92:\n93:def pool_stats() -> dict[str, int]:\n94:    """Snapshot of pool state for the metrics updater and health checks."""\n95:    pool = engine.sync_engine.pool\n96:    return {\n97:        "size": pool.size(),\n98:        "checked_out": pool.checkedout(),\n99:        "available": pool.checkedin(),\n100:        "overflow": pool.overflow(),\n101:    }', 'evidence_id': 'ev-read-3'}
+```
+
+### Metadata
+```
+{
+  "tool_name": "read_file"
+}
+```
+
+## 12. read\_file
+- Span ID: 5b93aa5880543103
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:27:45.682Z
+- Updated: 2026-10-10T13:27:45.683Z
+
+### Input
+```
+{
+  "path": "app/main.py",
+  "start_line": 142,
+  "end_line": 180
+}
+```
+
+### Output
+```
+{'path': 'app/main.py', 'start_line': 142, 'end_line': 166, 'snippet': '142:@app.get("/readyz")\n143:async def readyz():\n144:    """Readiness: can we actually get a DB connection and round-trip a query?\n145:\n146:    During pool exhaustion this begins to fail — distinguishing \'app is dead\'\n147:    from \'app cannot get a DB connection\' (ADR 0003).\n148:    """\n149:    try:\n150:        async def _probe():\n151:            async with db.acquire_session() as session:\n152:                await session.execute(text("SELECT 1"))\n153:\n154:        await asyncio.wait_for(_probe(), timeout=1.0)\n155:    except (asyncio.TimeoutError, SATimeoutError):\n156:        return Response(\n157:            content=\'{"status":"not_ready","reason":"db_unavailable"}\',\n158:            status_code=503,\n159:            media_type="application/json",\n160:        )\n161:    return {"status": "ready", "pool": db.pool_stats()}\n162:\n163:\n164:@app.get("/metrics")\n165:async def prometheus_metrics():\n166:    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)', 'evidence_id': 'ev-read-5'}
+```
+
+### Metadata
+```
+{
+  "tool_name": "read_file"
+}
+```
+
+## 13. read\_file
+- Span ID: 638ae8fe7bc59fe0
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:27:45.683Z
+- Updated: 2026-10-10T13:27:45.684Z
+
+### Input
+```
+{
+  "path": "app/middleware.py",
+  "start_line": 1,
+  "end_line": 80
+}
+```
+
+### Output
+```
+{'path': 'app/middleware.py', 'start_line': 1, 'end_line': 73, 'snippet': '1:"""Request middleware: request IDs, structured access logs, and HTTP metrics.\n2:\n3:Implements ADR 0003 layers 1 & 2 at the edge of every request.\n4:"""\n5:from __future__ import annotations\n6:\n7:import time\n8:import uuid\n9:\n10:import structlog\n11:from starlette.middleware.base import BaseHTTPMiddleware\n12:from starlette.requests import Request\n13:\n14:from . import metrics\n15:from .context import set_request_id\n16:from .logging_conf import get_logger\n17:from .tracing import tracer\n18:\n19:log = get_logger()\n20:\n21:\n22:class ObservabilityMiddleware(BaseHTTPMiddleware):\n23:    async def dispatch(self, request: Request, call_next):\n24:        request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex\n25:        set_request_id(request_id)\n26:\n27:        # Bind request_id so every structlog line during this request carries it.\n28:        structlog.contextvars.clear_contextvars()\n29:        structlog.contextvars.bind_contextvars(request_id=request_id)\n30:\n31:        route = request.url.path\n32:        method = request.method\n33:        label_route = _normalize_route(route)\n34:        metrics.HTTP_IN_FLIGHT.inc()\n35:        t0 = time.perf_counter()\n36:        status = 500\n37:        # Root span; db.checkout and downstream.call nest under it, so a single\n38:        # trace shows where a slow request spent its time.\n39:        with tracer.start_as_current_span("http.request") as span:\n40:            span.set_attribute("http.method", method)\n41:            span.set_attribute("http.route", label_route)\n42:            span.set_attribute("request_id", request_id)\n43:            try:\n44:                response = await call_next(request)\n45:                status = response.status_code\n46:                response.headers["X-Request-ID"] = request_id\n47:                return response\n48:            finally:\n49:                duration = time.perf_counter() - t0\n50:                span.set_attribute("http.status_code", status)\n51:                metrics.HTTP_IN_FLIGHT.dec()\n52:                # Collapse path params to keep metric label cardinality low.\n53:                metrics.HTTP_REQUEST_DURATION.labels(\n54:                    label_route, method, str(status)\n55:                ).observe(duration)\n56:                metrics.HTTP_REQUESTS_TOTAL.labels(\n57:                    label_route, method, str(status)\n58:                ).inc()\n59:                log.info(\n60:                    "request.completed",\n61:                    method=method,\n62:                    path=route,\n63:                    route=label_route,\n64:                    status=status,\n65:                    duration_ms=round(duration * 1000, 2),\n66:                )\n67:\n68:\n69:def _normalize_route(path: str) -> str:\n70:    # Keep the metric route labels bounded regardless of the widget id.\n71:    if path.startswith("/widgets/"):\n72:        return "/widgets/{id}"\n73:    return path', 'evidence_id': 'ev-read-6'}
+```
+
+### Metadata
+```
+{
+  "tool_name": "read_file"
+}
+```
+
+## 14. run\_k6
+- Span ID: 2cd4f0ed5c4dd4f7
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:27:53.154Z
+- Updated: 2026-10-10T13:28:08.814Z
+
+### Input
+```
+{
+  "payload": {
+    "endpoints": [
+      {
+        "id": "widget",
+        "method": "GET",
+        "path": "/widgets/1",
+        "weight": 3
+      },
+      {
+        "id": "healthz",
+        "method": "GET",
+        "path": "/healthz",
+        "weight": 1
+      },
+      {
+        "id": "readyz",
+        "method": "GET",
+        "path": "/readyz",
+        "weight": 1
+      }
+    ],
+    "rate": 2,
+    "duration_s": 15
+  }
+}
+```
+
+### Output
+```
+{'offered_rps': 2.0, 'duration_s': 15, 'dropped_iterations': 0, 'vus_max': 1, 'vu_ceiling': 50, 'vus_max_reached': False, 'operations': {'widget': {'count': 20, 'error_count': 20, 'error_rate': 1.0, 'p50_ms': 565.7056474999999, 'p95_ms': 751.5996644, 'offered_rps': 1.2, 'achieved_rps': 1.3333333333333333, 'status_counts': {'0': 20}}, 'healthz': {'count': 7, 'error_count': 7, 'error_rate': 1.0, 'p50_ms': 3.578242, 'p95_ms': 3.6711176, 'offered_rps': 0.4, 'achieved_rps': 0.4666666666666667, 'status_counts': {'0': 7}}, 'readyz': {'count': 3, 'error_count': 3, 'error_rate': 1.0, 'p50_ms': 8.332969, 'p95_ms': 8.6067175, 'offered_rps': 0.4, 'achieved_rps': 0.2, 'status_counts': {'0': 3}}}, 'experiment_id': 'exp-k6-0001', 'artifacts': {'k6_summary': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-1/k6.summary.json', 'k6_stdout': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-1/k6.stdout'}}
+```
+
+### Metadata
+```
+{
+  "tool_name": "run_k6"
+}
+```
+
+## 15. read\_file
+- Span ID: 50ae5fc0fd40fe5b
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:28:12.859Z
+- Updated: 2026-10-10T13:28:12.860Z
+
+### Input
+```
+{
+  "path": "/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-1/k6.stdout",
+  "start_line": 1,
+  "end_line": 80
+}
+```
+
+### Output
+```
+{'error': 'path outside repository'}
+```
+
+### Metadata
+```
+{
+  "tool_name": "read_file"
+}
+```
+
+## 16. run\_k6
+- Span ID: b545c174e5b8ca04
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:28:19.656Z
+- Updated: 2026-10-10T13:28:46.612Z
+
+### Input
+```
+{
+  "payload": {
+    "endpoints": [
+      {
+        "id": "widget",
+        "method": "GET",
+        "path": "/widgets/1"
+      }
+    ],
+    "rate": 10,
+    "duration_s": 20
+  }
+}
+```
+
+### Output
+```
+{'offered_rps': 10.0, 'duration_s': 20, 'dropped_iterations': 1, 'vus_max': 48, 'vu_ceiling': 50, 'vus_max_reached': False, 'operations': {'widget': {'count': 200, 'error_count': 200, 'error_rate': 1.0, 'p50_ms': 3021.541764, 'p95_ms': 5529.38289405, 'offered_rps': 10.0, 'achieved_rps': 10.0, 'status_counts': {'0': 200}}}, 'experiment_id': 'exp-k6-0002', 'artifacts': {'k6_summary': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-2/k6.summary.json', 'k6_stdout': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-2/k6.stdout'}}
+```
+
+### Metadata
+```
+{
+  "tool_name": "run_k6"
+}
+```
+
+## 17. run\_k6
+- Span ID: fea22ae711dc05f0
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:28:51.110Z
+- Updated: 2026-10-10T13:29:01.859Z
+
+### Input
+```
+{
+  "payload": {
+    "endpoints": [
+      {
+        "id": "notfound",
+        "method": "GET",
+        "path": "/nonexistent"
+      },
+      {
+        "id": "bogus_widget",
+        "method": "GET",
+        "path": "/widgets/999999"
+      }
+    ],
+    "rate": 5,
+    "duration_s": 10
+  }
+}
+```
+
+### Output
+```
+{'offered_rps': 5.0, 'duration_s': 10, 'dropped_iterations': 0, 'vus_max': 3, 'vu_ceiling': 50, 'vus_max_reached': False, 'operations': {'notfound': {'count': 26, 'error_count': 26, 'error_rate': 1.0, 'p50_ms': 1.1710585, 'p95_ms': 1.7713775, 'offered_rps': 2.5, 'achieved_rps': 2.6, 'status_counts': {'0': 26}}, 'bogus_widget': {'count': 25, 'error_count': 25, 'error_rate': 1.0, 'p50_ms': 507.117344, 'p95_ms': 765.8297824, 'offered_rps': 2.5, 'achieved_rps': 2.5, 'status_counts': {'0': 25}}}, 'experiment_id': 'exp-k6-0003', 'artifacts': {'k6_summary': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-3/k6.summary.json', 'k6_stdout': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-3/k6.stdout'}}
+```
+
+### Metadata
+```
+{
+  "tool_name": "run_k6"
+}
+```
+
+## 18. repo
+- Span ID: 953b5500fd00f5fb
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:29:16.359Z
+- Updated: 2026-10-10T13:29:16.428Z
+
+### Input
+```
+{
+  "action": "search",
+  "query": "docker-compose.yml environment",
+  "symbol": ""
+}
+```
+
+### Output
+```
+{'hits': [{'source': 'entire_graph', 'command': 'search', 'text': '{"query":"docker-compose.yml environment","repo_root":"/home/aarush_linux/projects/neathacks/integration/targets/unreliable-blind","commit":"252fabbd9275f870c04b4a1cb6c22f546d05302b","tree":"12d0be3ce635c70d6a8c84a8d0abe220bdab7579","profile":"full","results":[{"rank":1,"score":20.9293,"file_path":"docker-compose.yml","start_line":2,"end_line":17,"focus_line":11,"snippet_start_line":8,"snippet_end_line":13,"symbol_start_line":2,"symbol_end_line":17,"language":"YAML","kind":"resource","symbol_id":"local/unreliable-blind:YAML:docker-compose.yml:resource:compose.service.db","symbol_name":"db","qualified_name":"compose.service.db","signature":"docker compose service db","signals":["path","body","symbol-name","signature"],"snippet":"    ports:\\n      - \\"5432:5432\\"\\n    volumes:\\n      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro\\n    healthcheck:\\n      test: [\\"CMD-SHELL\\", \\"pg_isready -U app\\"]"},{"rank":2,"score":18.3535,"file_path":"docker-compose.yml","start_line":18,"end_line":27,"focus_line":21,"snippet_start_line":18,"snippet_end_line":23,"symbol_start_line":18,"symbol_end_line":27,"language":"YAML","kind":"resource","symbol_id":"local/unreliable-blind:YAML:docker-compose.yml:resource:compose.service.downstream","symbol_name":"downstream","qualified_name":"compose.service.downstream","signature":"docker compose service downstream","signals":["path","body","symbol-name","signature"],"snippet":"  downstream:\\n    build: .\\n    command: uvicorn downstream.main:app --host 0.0.0.0 --port 9000\\n    environment:\\n      DOWNSTREAM_BASE_MS: \\"300\\"\\n      DOWNSTREAM_JITTER_MS: \\"500\\""},{"rank":3,"score":10.7385,"file_path":"app/db.py","start_line":63,"end_line":90,"focus_line":67,"snippet_start_line":63,"snippet_end_line":90,"symbol_start_line":63,"symbol_end_line":90,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/db.py:function:ensure_schema_and_seed","symbol_name":"ensure_schema_and_seed","qualified_name":"ensure_schema_and_seed","signature":"async def ensure_schema_and_seed() -> None","signals":["body","graph:callers","complete-symbol"],"snippet":"async def ensure_schema_and_seed() -> None:\\n    \\"\\"\\"Idempotently create the widgets table and seed it.\\n\\n    Makes the app runnable against a bare Postgres even without the init.sql\\n    bootstrap, so `docker compose up` and a local run behave identically.\\n    \\"\\"\\"\\n    async with engine.begin() as conn:\\n        await conn.execute(\\n            text(\\n                \\"\\"\\"\\n                CREATE TABLE IF NOT EXISTS widgets (\\n                    id    SERIAL PRIMARY KEY,\\n                    name  TEXT NOT NULL,\\n                    price NUMERIC(10, 2) NOT NULL\\n                )\\n                \\"\\"\\"\\n            )\\n        )\\n        count = (await conn.execute(text(\\"SELECT COUNT(*) FROM widgets\\"))).scalar_one()\\n        if count == 0:\\n            await conn.execute(\\n                text(\\n                    \\"INSERT INTO widgets (name, price) \\"\\n                    \\"SELECT \'widget-\' || g, (g * 1.5)::numeric \\"\\n                    \\"FROM generate_series(1, 100) AS g\\"\\n                )\\n            )\\n            log.info(\\"db.seeded\\", rows=100)"},{"rank":4,"score":9.8292,"file_path":"app/tracing.py","start_line":24,"end_line":35,"focus_line":26,"snippet_start_line":24,"snippet_end_line":35,"symbol_start_line":24,"symbol_end_line":35,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/tracing.py:function:_compact","symbol_name":"_compact","qualified_name":"_compact","signature":"def _compact(span) -> str","signals":["body","complete-symbol"],"snippet":"def _compact(span) -> str:\\n    \\"\\"\\"One line per span so it reads cleanly in `docker compose logs`.\\"\\"\\"\\n    ctx = span.get_span_context()\\n    data = {\\n        \\"otel_span\\": span.name,\\n        \\"trace_id\\": format(ctx.trace_id, \\"032x\\"),\\n        \\"span_id\\": format(ctx.span_id, \\"016x\\"),\\n        \\"parent_id\\": format(span.parent.span_id, \\"016x\\") if span.parent else None,\\n        \\"duration_ms\\": round((span.end_time - span.start_time) / 1e6, 2),\\n        \\"attributes\\": dict(span.attributes or {}),\\n    }\\n    return json.dumps(data) + \\"\\\\n\\"","comment_focus_line":25,"body_from_reanchor":true},{"rank":5,"score":18.0942,"file_path":"docker-compose.yml","start_line":52,"end_line":65,"focus_line":54,"snippet_start_line":52,"snippet_end_line":57,"symbol_start_line":52,"symbol_end_line":65,"language":"YAML","kind":"resource","symbol_id":"local/unreliable-blind:YAML:docker-compose.yml:resource:compose.service.grafana","symbol_name":"grafana","qualified_name":"compose.service.grafana","signature":"docker compose service grafana","signals":["path","body","symbol-name","signature"],"snippet":"  grafana:\\n    image: grafana/grafana:11.3.0\\n    environment:\\n      GF_AUTH_ANONYMOUS_ENABLED: \\"true\\"\\n      GF_AUTH_ANONYMOUS_ORG_ROLE: \\"Admin\\"\\n      GF_SECURITY_ADMIN_PASSWORD: \\"admin\\""},{"rank":6,"score":5.4675,"file_path":"Dockerfile","start_line":1,"end_line":17,"focus_line":16,"snippet_start_line":15,"snippet_end_line":16,"symbol_start_line":1,"symbol_end_line":17,"language":"Dockerfile","kind":"stage","symbol_id":"local/unreliable-blind:Dockerfile:Dockerfile:stage:stage1","symbol_name":"stage1","qualified_name":"stage1","signature":"FROM python:3.12-slim","signals":["body"],"snippet":"# in docker-compose.\\nCMD [\\"uvicorn\\", \\"app.main:app\\", \\"--host\\", \\"0.0.0.0\\", \\"--port\\", \\"8000\\"]","comment_focus_line":15},{"rank":7,"score":0,"file_path":"app/db.py","start_line":93,"end_line":101,"focus_line":93,"snippet_start_line":93,"snippet_end_line":93,"kind":"function","qualified_name":"pool_stats","signals":["related:sibling"],"section":"related","snippet":"def pool_stats() -> dict[str, int]:"},{"rank":8,"score":0,"file_path":"app/main.py","start_line":42,"end_line":62,"focus_line":42,"snippet_start_line":42,"snippet_end_line":42,"kind":"function","qualified_name":"lifespan","signa'}], 'coverage': 'entire'}
+```
+
+### Metadata
+```
+{
+  "tool_name": "repo"
+}
+```
+
+## 19. repo
+- Span ID: 7275b0ba02bec853
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:29:16.359Z
+- Updated: 2026-10-10T13:29:16.435Z
+
+### Input
+```
+{
+  "action": "search",
+  "query": "FIX_ENABLED DB_POOL_SIZE docker-compose env",
+  "symbol": ""
+}
+```
+
+### Output
+```
+{'hits': [{'source': 'entire_graph', 'command': 'search', 'text': '{"query":"FIX_ENABLED DB_POOL_SIZE docker-compose env","repo_root":"/home/aarush_linux/projects/neathacks/integration/targets/unreliable-blind","commit":"252fabbd9275f870c04b4a1cb6c22f546d05302b","tree":"12d0be3ce635c70d6a8c84a8d0abe220bdab7579","profile":"full","results":[{"rank":1,"score":48.4611,"file_path":"app/config.py","start_line":27,"end_line":58,"focus_line":53,"snippet_start_line":50,"snippet_end_line":55,"language":"Python","signals":["body","constraint:phrase","exact-code-token"],"snippet":"# FIX_ENABLED=true   -> the fixed code path (connection released before the\\n#                       downstream call).\\n# Same binary, one switch, so the before/after demo is honest.\\nFIX_ENABLED: bool = _get_bool(\\"FIX_ENABLED\\", False)\\n\\n# --- Misc -----------------------------------------------------------------","comment_focus_line":48},{"rank":2,"score":38.1892,"file_path":"app/main.py","start_line":30,"end_line":62,"focus_line":46,"snippet_start_line":30,"snippet_end_line":62,"symbol_start_line":42,"symbol_end_line":62,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/main.py:function:lifespan","symbol_name":"lifespan","qualified_name":"lifespan","signature":"async def lifespan(app: FastAPI)","signals":["body","constraint:phrase","exact-code-token","complete-symbol","contiguous-span"],"snippet":"async def _pool_gauge_updater() -> None:\\n    \\"\\"\\"Continuously publish pool state to Prometheus (ADR 0003, the key signal).\\"\\"\\"\\n    while True:\\n        stats = db.pool_stats()\\n        metrics.DB_POOL_CONNECTIONS.labels(\\"size\\").set(stats[\\"size\\"])\\n        metrics.DB_POOL_CONNECTIONS.labels(\\"checked_out\\").set(stats[\\"checked_out\\"])\\n        metrics.DB_POOL_CONNECTIONS.labels(\\"available\\").set(stats[\\"available\\"])\\n        metrics.DB_POOL_CONNECTIONS.labels(\\"overflow\\").set(stats[\\"overflow\\"])\\n        await asyncio.sleep(1.0)\\n\\n\\n@asynccontextmanager\\nasync def lifespan(app: FastAPI):\\n    log.info(\\n        \\"service.starting\\",\\n        service=config.SERVICE_NAME,\\n        fix_enabled=config.FIX_ENABLED,\\n        pool_size=config.DB_POOL_SIZE,\\n        max_overflow=config.DB_MAX_OVERFLOW,\\n        pool_timeout=config.DB_POOL_TIMEOUT,\\n    )\\n    await db.ensure_schema_and_seed()\\n    app.state.http = httpx.AsyncClient()\\n    updater = asyncio.create_task(_pool_gauge_updater())\\n    try:\\n        yield\\n    finally:\\n        updater.cancel()\\n        with contextlib.suppress(asyncio.CancelledError):\\n            await updater\\n        await app.state.http.aclose()\\n        await db.engine.dispose()\\n        log.info(\\"service.stopped\\")","merged_ranks":[2,4]},{"rank":3,"score":32.311,"file_path":"docker-compose.yml","start_line":28,"end_line":44,"focus_line":37,"snippet_start_line":34,"snippet_end_line":39,"symbol_start_line":28,"symbol_end_line":44,"language":"YAML","kind":"resource","symbol_id":"local/unreliable-blind:YAML:docker-compose.yml:resource:compose.service.app","symbol_name":"app","qualified_name":"compose.service.app","signature":"docker compose service app","signals":["path","body","symbol-name","signature","constraint:phrase","exact-code-token","data-prior"],"section":"docs-and-fixtures","snippet":"      DATABASE_URL: REDACTED      DOWNSTREAM_URL: http://downstream:9000\\n      # The fault switch. Set to \\"true\\" to run the FIXED version.\\n      FIX_ENABLED: \\"${FIX_ENABLED:-false}\\"\\n      DB_POOL_SIZE: \\"5\\"\\n      DB_MAX_OVERFLOW: \\"0\\""},{"rank":4,"score":24.1521,"file_path":"app/db.py","start_line":63,"end_line":90,"focus_line":63,"snippet_start_line":63,"snippet_end_line":90,"symbol_start_line":63,"symbol_end_line":90,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/db.py:function:ensure_schema_and_seed","symbol_name":"ensure_schema_and_seed","qualified_name":"ensure_schema_and_seed","signature":"async def ensure_schema_and_seed() -> None","signals":["graph:calls","graph:outgoing","graph:callers","complete-symbol"],"snippet":"async def ensure_schema_and_seed() -> None:\\n    \\"\\"\\"Idempotently create the widgets table and seed it.\\n\\n    Makes the app runnable against a bare Postgres even without the init.sql\\n    bootstrap, so `docker compose up` and a local run behave identically.\\n    \\"\\"\\"\\n    async with engine.begin() as conn:\\n        await conn.execute(\\n            text(\\n                \\"\\"\\"\\n                CREATE TABLE IF NOT EXISTS widgets (\\n                    id    SERIAL PRIMARY KEY,\\n                    name  TEXT NOT NULL,\\n                    price NUMERIC(10, 2) NOT NULL\\n                )\\n                \\"\\"\\"\\n            )\\n        )\\n        count = (await conn.execute(text(\\"SELECT COUNT(*) FROM widgets\\"))).scalar_one()\\n        if count == 0:\\n            await conn.execute(\\n                text(\\n                    \\"INSERT INTO widgets (name, price) \\"\\n                    \\"SELECT \'widget-\' || g, (g * 1.5)::numeric \\"\\n                    \\"FROM generate_series(1, 100) AS g\\"\\n                )\\n            )\\n            log.info(\\"db.seeded\\", rows=100)"},{"rank":5,"score":20.9307,"file_path":"app/db.py","start_line":93,"end_line":101,"focus_line":97,"snippet_start_line":96,"snippet_end_line":97,"symbol_start_line":93,"symbol_end_line":101,"language":"Python","kind":"function","symbol_id":"local/unreliable-blind:Python:app/db.py:function:pool_stats","symbol_name":"pool_stats","qualified_name":"pool_stats","signature":"def pool_stats() -> dict[str, int]","signals":["body","symbol-name","constraint:phrase","graph:callers"],"snippet":"    return {\\n        \\"size\\": pool.size(),"},{"rank":6,"score":12.3998,"file_path":"Dockerfile","start_line":1,"end_line":17,"focus_line":16,"snippet_start_line":15,"snippet_end_line":16,"symbol_start_line":1,"symbol_end_line":17,"language":"Dockerfile","kind":"stage","symbol_id":"local/unreliable-blind:Dockerfile:Dockerfile:stage:stage1","symbol_name":"stage1","qualified_name":"st'}], 'coverage': 'entire'}
+```
+
+### Metadata
+```
+{
+  "tool_name": "repo"
+}
+```
+
+## 20. run\_k6
+- Span ID: a55dc48704e2b148
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:29:36.105Z
+- Updated: 2026-10-10T13:29:57.092Z
+
+### Input
+```
+{
+  "payload": {
+    "endpoints": [
+      {
+        "id": "widget",
+        "method": "GET",
+        "path": "/widgets/1"
+      }
+    ],
+    "rate": 5,
+    "duration_s": 20
+  }
+}
+```
+
+### Output
+```
+{'offered_rps': 5.0, 'duration_s': 20, 'dropped_iterations': 0, 'vus_max': 4, 'vu_ceiling': 50, 'vus_max_reached': False, 'operations': {'widget': {'count': 101, 'error_count': 101, 'error_rate': 1.0, 'p50_ms': 540.79703, 'p95_ms': 815.659925, 'offered_rps': 5.0, 'achieved_rps': 5.05, 'status_counts': {'0': 101}}}, 'experiment_id': 'exp-k6-0004', 'artifacts': {'k6_summary': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-4/k6.summary.json', 'k6_stdout': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-4/k6.stdout'}}
+```
+
+### Metadata
+```
+{
+  "tool_name": "run_k6"
+}
+```
+
+## 21. run\_k6
+- Span ID: b27024b9061ae244
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:30:00.086Z
+- Updated: 2026-10-10T13:30:26.270Z
+
+### Input
+```
+{
+  "payload": {
+    "endpoints": [
+      {
+        "id": "widget",
+        "method": "GET",
+        "path": "/widgets/1"
+      }
+    ],
+    "rate": 12,
+    "duration_s": 20
+  }
+}
+```
+
+### Output
+```
+{'offered_rps': 12.0, 'duration_s': 20, 'dropped_iterations': 32, 'vus_max': 50, 'vu_ceiling': 50, 'vus_max_reached': True, 'operations': {'widget': {'count': 209, 'error_count': 209, 'error_rate': 1.0, 'p50_ms': 5004.097368, 'p95_ms': 5640.6403394, 'offered_rps': 12.0, 'achieved_rps': 10.45, 'status_counts': {'0': 209}}}, 'experiment_id': 'exp-k6-0005', 'artifacts': {'k6_summary': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-5/k6.summary.json', 'k6_stdout': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-5/k6.stdout'}}
+```
+
+### Metadata
+```
+{
+  "tool_name": "run_k6"
+}
+```
+
+## 22. run\_k6
+- Span ID: 4224319a1ef204a9
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:30:31.898Z
+- Updated: 2026-10-10T13:31:09.088Z
+
+### Input
+```
+{
+  "payload": {
+    "endpoints": [
+      {
+        "id": "widget",
+        "method": "GET",
+        "path": "/widgets/1",
+        "weight": 8
+      },
+      {
+        "id": "healthz",
+        "method": "GET",
+        "path": "/healthz",
+        "weight": 1
+      },
+      {
+        "id": "readyz",
+        "method": "GET",
+        "path": "/readyz",
+        "weight": 1
+      },
+      {
+        "id": "metrics",
+        "method": "GET",
+        "path": "/metrics",
+        "weight": 1
+      }
+    ],
+    "rate": 30,
+    "duration_s": 30
+  }
+}
+```
+
+### Output
+```
+{'offered_rps': 30.0, 'duration_s': 30, 'dropped_iterations': 408, 'vus_max': 60, 'vu_ceiling': 60, 'vus_max_reached': True, 'operations': {'widget': {'count': 360, 'error_count': 360, 'error_rate': 1.0, 'p50_ms': 5183.6401165, 'p95_ms': 5695.8647028, 'offered_rps': 21.8182, 'achieved_rps': 12.0, 'status_counts': {'0': 360}}, 'healthz': {'count': 36, 'error_count': 36, 'error_rate': 1.0, 'p50_ms': 1.2549385000000002, 'p95_ms': 5.8204265, 'offered_rps': 2.7273, 'achieved_rps': 1.2, 'status_counts': {'0': 36}}, 'readyz': {'count': 52, 'error_count': 52, 'error_rate': 1.0, 'p50_ms': 1003.0741029999999, 'p95_ms': 1006.32611695, 'offered_rps': 2.7273, 'achieved_rps': 1.7333333333333334, 'status_counts': {'0': 52}}, 'metrics': {'count': 45, 'error_count': 45, 'error_rate': 1.0, 'p50_ms': 3.291012, 'p95_ms': 11.538186399999997, 'offered_rps': 2.7273, 'achieved_rps': 1.5, 'status_counts': {'0': 45}}}, 'experiment_id': 'exp-k6-0006', 'artifacts': {'k6_summary': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-6/k6.summary.json', 'k6_stdout': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-6/k6.stdout'}}
+```
+
+### Metadata
+```
+{
+  "tool_name": "run_k6"
+}
+```
+
+## 23. run\_k6
+- Span ID: f4c09768928451c3
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:31:15.520Z
+- Updated: 2026-10-10T13:31:30.798Z
+
+### Input
+```
+{
+  "payload": {
+    "endpoints": [
+      {
+        "id": "readyz",
+        "method": "GET",
+        "path": "/readyz",
+        "weight": 1
+      },
+      {
+        "id": "healthz",
+        "method": "GET",
+        "path": "/healthz",
+        "weight": 1
+      },
+      {
+        "id": "metrics",
+        "method": "GET",
+        "path": "/metrics",
+        "weight": 1
+      }
+    ],
+    "rate": 10,
+    "duration_s": 15
+  }
+}
+```
+
+### Output
+```
+{'offered_rps': 10.0, 'duration_s': 15, 'dropped_iterations': 0, 'vus_max': 0, 'vu_ceiling': 50, 'vus_max_reached': False, 'operations': {'readyz': {'count': 53, 'error_count': 53, 'error_rate': 1.0, 'p50_ms': 8.431743, 'p95_ms': 9.037226800000001, 'offered_rps': 3.3333, 'achieved_rps': 3.533333333333333, 'status_counts': {'0': 53}}, 'healthz': {'count': 45, 'error_count': 45, 'error_rate': 1.0, 'p50_ms': 3.483664, 'p95_ms': 3.7141424, 'offered_rps': 3.3333, 'achieved_rps': 3.0, 'status_counts': {'0': 45}}, 'metrics': {'count': 53, 'error_count': 53, 'error_rate': 1.0, 'p50_ms': 10.769316, 'p95_ms': 12.202045, 'offered_rps': 3.3333, 'achieved_rps': 3.533333333333333, 'status_counts': {'0': 53}}}, 'experiment_id': 'exp-k6-0007', 'artifacts': {'k6_summary': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-7/k6.summary.json', 'k6_stdout': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-7/k6.stdout'}}
+```
+
+### Metadata
+```
+{
+  "tool_name": "run_k6"
+}
+```
+
+## 24. run\_k6
+- Span ID: b290cc5a6698fcfc
+- Parent span ID: 97791434de2ac7b7
+- Type: tool\_call
+- Status: SUCCESS
+- Created: 2026-10-10T13:31:43.859Z
+- Updated: 2026-10-10T13:32:20.104Z
+
+### Input
+```
+{
+  "payload": {
+    "endpoints": [
+      {
+        "id": "widget",
+        "method": "GET",
+        "path": "/widgets/1"
+      }
+    ],
+    "rate": 20,
+    "duration_s": 30
+  }
+}
+```
+
+### Output
+```
+{'offered_rps': 20.0, 'duration_s': 30, 'dropped_iterations': 282, 'vus_max': 50, 'vu_ceiling': 50, 'vus_max_reached': True, 'operations': {'widget': {'count': 319, 'error_count': 319, 'error_rate': 1.0, 'p50_ms': 5214.267915, 'p95_ms': 5706.4143057, 'offered_rps': 20.0, 'achieved_rps': 10.633333333333333, 'status_counts': {'0': 319}}}, 'experiment_id': 'exp-k6-0008', 'artifacts': {'k6_summary': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-8/k6.summary.json', 'k6_stdout': '/home/aarush_linux/.local/share/loadline/runs/78c0fea15b03/waves/agent-k6-8/k6.stdout'}}
+```
+
+### Metadata
+```
+{
+  "tool_name": "run_k6"
+}
+```
+
+---
+
+yea then make a plan file . 
+root cause fixes
+keep the main agent loop clean sumle , no rigid determinstic stuff or hardcoding at all
+
+---
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
