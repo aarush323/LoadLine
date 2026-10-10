@@ -1,0 +1,21 @@
+push (dahbaord+ui added) commit msg
+
+---
+
+the plan will be done implementation after that u do the code review and testing . then give commands and then we test it on hoh
+
+---
+
+before that ceate readme for my teammate : explain in simple words : pre setup agent we plan to setup env , the what env is and then oursimple main loop : it has 3 tools graph of entire read file and k6 . explain what k6 is then . so entire rpoject in simplle words explain and push only readme
+
+---
+
+u arent helping . explain loadline load the agent loop in simple workflow steps , and smae with loadline run . like how we originally did
+
+---
+
+push
+
+---
+
+NO CO AUTHROED BY CURSOR WTF
