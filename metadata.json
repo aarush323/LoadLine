@@ -1,0 +1,39 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M4K5A57V20TZ3YMEQ48Y37S3",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "agents/investigator_prompt.md",
+    "loadline/adapters/generator/k6_compiler.py",
+    "loadline/adapters/generator/k6_operation_metrics.py",
+    "loadline/investigator/k6_tool.py",
+    "loadline/investigator/repo_routes.py",
+    "loadline/investigator/report_compose.py",
+    "loadline/investigator/run.py",
+    "loadline/investigator/tools.py",
+    "tests/unit/test_investigation_report_compose.py",
+    "tests/unit/test_investigator_prompt.py",
+    "tests/unit/test_investigator_run.py",
+    "tests/unit/test_investigator_tools.py",
+    "tests/unit/test_k6_operation_metrics.py",
+    "tests/unit/test_repo_routes.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 48073,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 567661,
+    "output_tokens": 6470,
+    "api_call_count": 2
+  }
+}

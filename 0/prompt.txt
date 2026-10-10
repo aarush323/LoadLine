@@ -1,0 +1,5 @@
+explain the current isolated env setup exactly how we do pre agent run/ and then also current simple agent loop what it is fr
+
+---
+
+explain hoh in terms of what would be require to set that up fr for our loadline
