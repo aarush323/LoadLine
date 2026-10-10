@@ -1,7 +1,37 @@
 import json
 
-from loadline.adapters.generator.k6_operation_metrics import aggregate_operations_from_metrics
+from loadline.adapters.generator.k6_operation_metrics import (
+    aggregate_operations_from_metrics,
+    sanitize_operation_metrics,
+)
 from loadline.adapters.generator.k6_summary import parse_handle_summary
+
+
+def test_parse_handle_summary_uses_operations_blob_with_status():
+    metrics = {
+        "http_reqs{operation:widget,status:200}": {"values": {"count": 50}},
+        "http_reqs{operation:widget,status:503}": {"values": {"count": 5}},
+        "http_req_duration{operation:widget}": {"values": {"med": 100, "p(95)": 500, "count": 55}},
+        "http_req_failed": {"values": {"rate": 0}},
+    }
+    payload = {
+        "vu_ceiling": 50,
+        "duration_s": 10,
+        "vus_max": 4,
+        "dropped_iterations": 0,
+        "metrics": metrics,
+        "operations": {
+            "widget": {
+                "count": 55,
+                "status_counts": {"200": 50, "503": 5},
+                "error_count": 5,
+            }
+        },
+        "state": {"testRunDurationMs": 10000},
+    }
+    parsed = parse_handle_summary(json.dumps(payload))
+    assert parsed.parse_ok
+    assert parsed.operations["widget"]["status_counts"].get("503") == 5
 
 
 def test_aggregate_two_operations_different_p95_not_hidden_by_aggregate():
@@ -59,3 +89,12 @@ def test_operation_only_http_reqs_does_not_invent_status_zero_errors():
     assert row["error_rate"] == 0.0
     assert row["http_status_known"] is False
     assert row["status_counts_reliable"] is False
+
+
+def test_sanitize_legacy_status_zero_bucket():
+    row = sanitize_operation_metrics(
+        {"count": 20, "error_count": 20, "error_rate": 1.0, "status_counts": {"0": 20}}
+    )
+    assert row["status_counts"] == {}
+    assert row["error_count"] == 0
+    assert row["error_rate"] == 0.0

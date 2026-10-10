@@ -32,6 +32,23 @@ def _valid_http_status(status: str) -> bool:
     return bool(_HTTP_STATUS_RE.match(str(status)))
 
 
+def sanitize_operation_metrics(row: dict[str, Any]) -> dict[str, Any]:
+    """Remove bogus legacy status buckets (e.g. missing tag defaulted to \"0\")."""
+    out = dict(row)
+    sc = {str(k): int(v) for k, v in (out.get("status_counts") or {}).items()}
+    if sc and all(k == "0" for k in sc):
+        out["status_counts"] = {}
+        out["error_count"] = 0
+        failed = out.get("http_req_failed_rate")
+        if failed is not None:
+            out["error_rate"] = float(failed)
+        elif out.get("error_rate") == 1.0:
+            out["error_rate"] = 0.0
+        out["http_status_known"] = False
+        out["status_counts_reliable"] = False
+    return out
+
+
 def aggregate_operations_from_metrics(metrics: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Build per-operation counts, status breakdown, error rate, and latency percentiles."""
     ops: dict[str, dict[str, Any]] = {}
@@ -121,17 +138,20 @@ def merge_operation_stats(
     merged: dict[str, dict[str, Any]] = {}
     for op_id, row in from_metrics.items():
         count = int(row.get("count") or 0)
-        merged[op_id] = {
-            "count": count,
-            "error_count": int(row.get("error_count") or 0),
-            "error_rate": float(row.get("error_rate") or 0),
-            "p50_ms": row.get("p50_ms"),
-            "p95_ms": row.get("p95_ms"),
-            "status_counts": dict(row.get("status_counts") or {}),
-            "http_status_known": bool(row.get("http_status_known")),
-            "status_counts_reliable": bool(row.get("status_counts_reliable")),
-            "achieved_rps": count / duration_s if duration_s else 0.0,
-        }
+        merged[op_id] = sanitize_operation_metrics(
+            {
+                "count": count,
+                "error_count": int(row.get("error_count") or 0),
+                "error_rate": float(row.get("error_rate") or 0),
+                "p50_ms": row.get("p50_ms"),
+                "p95_ms": row.get("p95_ms"),
+                "status_counts": dict(row.get("status_counts") or {}),
+                "http_status_known": bool(row.get("http_status_known")),
+                "status_counts_reliable": bool(row.get("status_counts_reliable")),
+                "http_req_failed_rate": row.get("http_req_failed_rate"),
+                "achieved_rps": count / duration_s if duration_s else 0.0,
+            }
+        )
     if from_payload:
         for op_id, row in from_payload.items():
             if not isinstance(row, dict):

@@ -163,6 +163,44 @@ export default function ({default_fn_params}) {{
   http.request(chosen.method, chosen.url, body, params);
 }}
 
+function _parseHttpReqTags(metricName) {{
+  const m = metricName.match(/^http_reqs\\{{(.+)\\}}$/);
+  if (!m) return null;
+  const tags = {{}};
+  for (const part of m[1].split(',')) {{
+    const idx = part.indexOf(':');
+    if (idx < 0) continue;
+    tags[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
+  }}
+  return tags;
+}}
+
+function _buildOperationsFromMetrics(metrics) {{
+  const ops = {{}};
+  for (const [name, block] of Object.entries(metrics || {{}})) {{
+    const tags = _parseHttpReqTags(name);
+    if (!tags || !tags.operation) continue;
+    const op = tags.operation;
+    if (!ops[op]) ops[op] = {{ count: 0, status_counts: {{}}, error_count: 0 }};
+    const c = (block.values && block.values.count) || 0;
+    if (tags.status) {{
+      ops[op].status_counts[tags.status] = (ops[op].status_counts[tags.status] || 0) + c;
+      ops[op].count += c;
+      if (!String(tags.status).startsWith('2')) ops[op].error_count += c;
+    }}
+  }}
+  for (const [name, block] of Object.entries(metrics || {{}})) {{
+    const m = name.match(/^http_req_duration\\{{operation:([^,}}]+)/);
+    if (!m) continue;
+    const op = m[1];
+    if (!ops[op]) ops[op] = {{ count: 0, status_counts: {{}}, error_count: 0 }};
+    const v = block.values || {{}};
+    if (v.med != null) ops[op].p50_ms = v.med;
+    if (v['p(95)'] != null) ops[op].p95_ms = v['p(95)'];
+  }}
+  return ops;
+}}
+
 export function handleSummary(data) {{
   const dropped = data.metrics.dropped_iterations?.values?.count || 0;
   const vusMax = data.metrics.vus?.values?.max || 0;
@@ -174,6 +212,7 @@ export function handleSummary(data) {{
     dropped_iterations: dropped,
     metrics: data.metrics,
     state: data.state,
+    operations: _buildOperationsFromMetrics(data.metrics),
   }};
   return {{ stdout: JSON.stringify(payload) }};
 }}

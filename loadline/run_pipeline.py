@@ -234,6 +234,12 @@ def emit_run_result(result: RunPipelineResult, console: RunConsole, *, print_rep
     if result.report_md and print_report and result.report_md.is_file():
         print("--- report ---")
         print(result.report_md.read_text())
+    try:
+        from loadline.ui.dashboard_tty import maybe_emit_dashboard
+
+        maybe_emit_dashboard(console, result.run_dir, result.run_id)
+    except Exception:
+        pass
     if result.run_dir:
         print(f"run_dir: {result.run_dir}", file=sys.stderr)
     if result.report_md:

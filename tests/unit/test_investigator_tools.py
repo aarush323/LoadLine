@@ -27,6 +27,13 @@ def _ctx(tmp_path: Path) -> RunContext[InvestigationDeps]:
     return RunContext(deps=deps, model=TestModel(), usage=MagicMock(), prompt=None)
 
 
+def test_read_file_rejects_absolute_run_artifact_path(tmp_path: Path):
+    ctx = _ctx(tmp_path)
+    out = read_file(ctx, "/home/user/.local/share/loadline/runs/x/k6.stdout", 1, 10)
+    assert "error" in out
+    assert "run_k6" in out["error"]
+
+
 def test_read_file_records_range(tmp_path: Path):
     src = tmp_path / "app.py"
     src.write_text("line1\nline2\nline3\n")

@@ -33,25 +33,13 @@ Inspect each endpoint in code before loading it. POST is fine when the handler i
 
 # Report
 
-Write markdown with these exact level-2 headings in this order. Do not open with a raw route inventory.
+Your last message is the full report. Lead with a short verdict (which API degraded, caller impact, load where behavior changed, likely cause, confidence and limits) — not a raw route inventory.
 
-## Verdict
-Plain English first: which API(s) degraded, what callers would experience, roughly what offered load preceded the change, one-sentence likely cause, confidence and measurement limits. Separate performance degradation from confirmed HTTP failures — only cite status codes when status_counts_reliable was true for that experiment.
+Include, as evidence allows:
+- What changed under load: cite experiment_id, offered rate, duration, per-operation p50/p95, errors, drops, and control endpoints when you ran them. Each run_k6 call is a separate experiment, not a continuous ramp.
+- Affected APIs: real method and path, handler location when known, primary vs control vs untested routes.
+- Code: fenced excerpts only from read_file (path and line range). Explain mechanism in plain English after each snippet.
+- Causal chain with **Observed**, **Inferred**, and **Unverified** — do not invent HTTP errors, pool timeouts, or status codes without evidence (respect status_counts_reliable and measurement_notes).
+- Next step: smallest plausible fix and a validation run_k6; do not claim a fix is validated without a post-fix experiment.
 
-## What happened under load
-Write only: `Measured tables and observations are inserted below by Loadline.`
-
-## Affected APIs
-For each important endpoint: HTTP method and real path (from routes and experiments), handler file/function when known, observed latency/throughput/errors as load changed, caller impact (only as strong as evidence). Mark primary degraded endpoint, shared-resource victims, responsive controls, and routes not tested or not mapped.
-
-## Code
-Include fenced code blocks copied from read_file snippets only (correct path and line range). Smallest excerpt that shows the suspected mechanism plus enough context for execution order. After each snippet, explain what the code does, what resource stays busy, why concurrency hurts, and how that matches measurements.
-
-## Causal chain
-Use subsections **Observed**, **Inferred**, and **Unverified**. Observed = experiment output and read source. Inferred = best explanation. Unverified = guesses not yet tested. Do not invent DB timeouts, pool exhaustion, or HTTP errors without evidence.
-
-## Next step
-Smallest code change likely to help and why. If a better pattern exists in the repo, point to it. Propose a validation run_k6 (rates, endpoints, metrics to compare). Never say a fix is validated unless a post-fix experiment was run and supports it.
-
-## Appendix
-You may omit this section; Loadline fills experiment IDs and source read ranges.
+Keep experiment IDs and read_file ranges in the narrative or a short appendix so the report stands alone without terminal logs.

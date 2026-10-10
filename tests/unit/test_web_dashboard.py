@@ -1,0 +1,130 @@
+import json
+import threading
+import urllib.request
+from http.server import ThreadingHTTPServer
+from pathlib import Path
+
+from loadline.cli import main
+from loadline.dashboard.render import render_run_page
+from loadline.dashboard.server import _Handler
+
+
+def _make_run(root: Path, run_id: str) -> Path:
+    run_dir = root / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "profile.json").write_text(
+        json.dumps({"root": "/nonexistent/repo-xyz", "languages": ["python"], "entrypoints": []})
+    )
+    events = [
+        {"seq": 1, "ts": "2026-10-10T14:32:00+00:00", "kind": "hypothesis",
+         "evidence_ids": [], "claim": "widget waits on the pool"},
+        {"seq": 2, "ts": "2026-10-10T14:32:20+00:00", "kind": "k6_run",
+         "evidence_ids": ["exp-k6-0001"], "experiment_id": "exp-k6-0001", "wave": "agent-k6-1",
+         "plan": {"mix": [{"op": {"id": "widget", "selector": {"method": "GET", "path": "/widgets/1"}}}]},
+         "result": {"offered_rps": 3.0, "dropped_iterations": 0, "vus_max": 8, "vu_ceiling": 50,
+                    "operations": {"widget": {"p95_ms": 801, "error_count": 0, "error_rate": 0.0,
+                                              "offered_rps": 3.0, "achieved_rps": 2.9}}}},
+        {"seq": 3, "ts": "2026-10-10T14:32:52+00:00", "kind": "k6_run",
+         "evidence_ids": ["exp-k6-0002"], "experiment_id": "exp-k6-0002", "wave": "agent-k6-2",
+         "plan": {"mix": [{"op": {"id": "widget", "selector": {"method": "GET", "path": "/widgets/1"}}}]},
+         "result": {"offered_rps": 20.0, "dropped_iterations": 167, "vus_max": 38, "vu_ceiling": 50,
+                    "operations": {"widget": {"p95_ms": 5774, "error_count": 12, "error_rate": 0.03,
+                                              "offered_rps": 20.0, "achieved_rps": 14.2}}}},
+        {"seq": 4, "ts": "2026-10-10T14:33:01+00:00", "kind": "finding",
+         "evidence_ids": ["exp-k6-0002"], "symptom": "widget tail latency climbs with load"},
+    ]
+    (run_dir / "ledger.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
+    (run_dir / "report.json").write_text(json.dumps({"run_id": run_id, "run_state": "completed"}))
+    (run_dir / "report.md").write_text("# Loadline report\n")
+    return run_dir
+
+
+def test_run_page_uses_measured_data_only(tmp_path: Path):
+    run_dir = _make_run(tmp_path / "runs", "aaa111")
+    page = render_run_page(run_dir, "aaa111")
+    assert page
+    assert "__" not in [s for s in __import__("re").findall(r"__[A-Z_]+__", page)]
+    for leaked in ("LL-7F2C", "EV-021", "812 ms", "146 req/s", "checkout-api",
+                   "Illustrative", "FIRST SLO BREACH", "The system bends at"):
+        assert leaked not in page
+    for real in ("aaa111", "5774", "/widgets/1", "exp-k6-0002", "agent-k6-2",
+                 "repo-xyz", "widget waits on the pool", "widget tail latency climbs"):
+        assert real in page
+    assert "SLO" in page and "not recorded" in page
+    assert "CODE MAP UNAVAILABLE" in page
+    assert "window.LOADLINE" in page
+
+
+def test_run_page_worst_op_beyond_graph_cap(tmp_path: Path):
+    """5 ops, worst p95 last: render must not raise and must show it."""
+    run_dir = tmp_path / "runs" / "bigops"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "profile.json").write_text(json.dumps({"root": "/nonexistent/repo-xyz"}))
+    ops = {f"op{i}": {"p95_ms": 10 + i, "error_count": 0, "error_rate": 0.0,
+                       "offered_rps": 5.0, "achieved_rps": 5.0} for i in range(4)}
+    ops["laggard"] = {"p95_ms": 9000, "error_count": 1, "error_rate": 0.01,
+                      "offered_rps": 5.0, "achieved_rps": 4.0}
+    (run_dir / "ledger.jsonl").write_text(json.dumps(
+        {"seq": 1, "kind": "k6_run", "evidence_ids": ["exp-k6-0001"],
+         "experiment_id": "exp-k6-0001", "wave": "agent-k6-1",
+         "plan": {"mix": []},
+         "result": {"offered_rps": 5.0, "dropped_iterations": 0, "operations": ops}}
+    ) + "\n")
+    (run_dir / "report.json").write_text(json.dumps({"run_id": "bigops", "run_state": "completed"}))
+    page = render_run_page(run_dir, "bigops")
+    assert page
+    assert "laggard" in page
+    assert "9000" in page
+
+
+def test_run_page_empty_dir(tmp_path: Path):
+    assert render_run_page(tmp_path / "nope", "nope") == ""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert render_run_page(empty, "empty") == ""
+
+
+def _serve_tmp(home: Path):
+    _Handler.home = home
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server
+
+
+def _get(port: int, path: str) -> tuple[int, str]:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}") as resp:
+            return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as exc:
+        return exc.code, ""
+
+
+def test_server_routes(tmp_path: Path):
+    import urllib.error
+
+    _make_run(tmp_path / "runs", "aaa111")
+    server = _serve_tmp(tmp_path)
+    try:
+        port = server.server_address[1]
+        code, body = _get(port, "/")
+        assert code == 200 and "aaa111" in body
+        code, body = _get(port, "/runs/aaa111")
+        assert code == 200 and "5774" in body
+        assert _get(port, "/runs/zzz")[0] == 404
+        code, body = _get(port, "/api/runs")
+        assert code == 200 and "aaa111" in json.loads(body)[0]["run_id"]
+        code, body = _get(port, "/artifacts/aaa111/report.md")
+        assert code == 200 and "Loadline report" in body
+        assert _get(port, "/nope")[0] == 404
+    finally:
+        server.shutdown()
+
+
+def test_dashboard_export_flag(tmp_path: Path, capsys, monkeypatch):
+    _make_run(tmp_path / "runs", "aaa111")
+    monkeypatch.setenv("LOADLINE_HOME", str(tmp_path))
+    out = tmp_path / "dash.html"
+    assert main(["dashboard", "--run", "aaa", "--export", str(out)]) == 0
+    assert "exp-k6-0002" in out.read_text()
+    assert main(["dashboard", "--export", str(out)]) == 2

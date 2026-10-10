@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from loadline.adapters.generator.k6_compiler import CompileError, compile_plan
+from loadline.adapters.generator.k6_operation_metrics import sanitize_operation_metrics
 from loadline.adapters.generator.k6_runner import run_k6_plan
 from loadline.investigator.deps import InvestigationDeps
 
@@ -170,6 +171,7 @@ def format_run_k6_result(
         row = raw_ops.get(op_id) if isinstance(raw_ops, dict) else None
         if not isinstance(row, dict):
             row = {}
+        row = sanitize_operation_metrics(row)
         count = int(row.get("count") or row.get("http_reqs") or 0)
         w = weights[idx] if idx < len(weights) else 1
         offered_op = offered_rps * (w / total_w)
@@ -351,7 +353,6 @@ def run_k6(
         tool_output=out,
     )
     out["experiment_id"] = experiment_id
-    out["artifacts"] = artifacts
     deps.ledger.append(
         "k6_run",
         evidence_ids=[experiment_id],

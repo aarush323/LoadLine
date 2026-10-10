@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__PAGE_TITLE__</title>
+<meta name="description" content="Loadline run dashboard: measured load, code graph, and evidence-backed investigation.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400..600&family=Geist:wght@400..700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>__STYLE__</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" aria-label="Main navigation">
+    <a class="brand" href="#overview" aria-label="Loadline overview">
+      <svg class="brand-mark" viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M2.5 19.5H8.5L12.1 9.5L16.2 15.7L19.1 6.5H25.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="25.5" cy="6.5" r="1.8" fill="currentColor"/></svg>
+      <div class="brand-copy"><div class="brand-name">loadline</div><div class="brand-tag">capacity with evidence</div></div>
+    </a>
+    <div class="repo-switch"><div class="repo-label">Current repository</div><div class="repo-name">__REPO_NAME__</div><div class="repo-meta">__REPO_META__</div></div>
+    <div class="nav-label">Run workspace</div>
+    <nav class="nav">
+      <a class="active" href="#overview" data-nav="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg><span>Overview</span></a>
+      <a href="#code-map" data-nav="code-map"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="5" cy="6" r="2"/><circle cx="18.5" cy="5" r="2"/><circle cx="12" cy="18.5" r="2"/><path d="M7 6h4l5.5-1M6.2 8l4.8 8.5M16.8 6.8l-3.6 9.7"/></svg><span>Code map</span>__NAV_COUNT__</a>
+      <a href="#experiments" data-nav="experiments"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 3.5h6M10 3.5v6l-5.5 9.2A1.8 1.8 0 0 0 6.1 21h11.8a1.8 1.8 0 0 0 1.6-2.3L14 9.5v-6"/><path d="M7.6 15.3h8.8"/></svg><span>Experiments</span></a>
+      <a href="#evidence" data-nav="evidence"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M7 3.5h7l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V5a1.5 1.5 0 0 1 1-1.5Z"/><path d="M14 3.5V8h4M9 12h6M9 16h6"/></svg><span>Evidence ledger</span></a>
+      <a href="#environment" data-nav="environment"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3.5" y="4" width="17" height="5" rx="1.4"/><rect x="3.5" y="11.5" width="17" height="5" rx="1.4"/><path d="M7 6.5h.01M7 14h.01M8.5 19.5h7"/></svg><span>Environment</span></a>
+    </nav>
+    <div class="side-bottom"><div class="artifacts">Run artifacts</div><a class="artifact-link" href="__ART_MD__" download>report.md <span>↗</span></a><a class="artifact-link" href="__ART_JSON__" download>report.json <span>↗</span></a></div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div class="crumbs"><span>Runs</span><span class="slash">/</span><span>__CRUMB_RUN__</span><span class="slash">/</span><strong id="crumb-active">Overview</strong></div>
+      <div class="top-actions"><span class="state">__STATE_PILL__</span><button class="icon-btn" id="palette-open" aria-label="Open command palette"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m15.5 15.5 4.3 4.3"/></svg><span class="key">⌘K</span></button></div>
+    </header>
+    <div class="page" id="overview">
+      <section class="hero-row">
+        <div class="hero-copy">
+          <div class="hero-eyebrow"><span class="eyebrow-line"></span><span class="eyebrow">__HERO_EYEBROW__</span></div>
+          <h1 class="hero-title">__HERO_TITLE__</h1>
+          <p class="hero-sub">__HERO_SUB__</p>
+          <div class="hero-meta">__META_CHIPS__</div>
+        </div>
+        <div class="hero-actions"><button class="btn" id="copy-run"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg>Copy run ID</button><button class="btn primary" id="open-report">Open report <span>↗</span></button></div>
+      </section>
+      <section class="metric-strip" aria-label="Run summary metrics">__METRICS__</section>
+      <section class="section" id="pressure">
+        <div class="section-head"><div><div class="section-title">Pressure over time</div><div class="section-desc">Offered load and p95 latency share a time axis; units stay separate.</div></div><button class="text-action" id="evidence-chart">View raw evidence <span>↗</span></button></div>
+        <div class="panel">
+          <div class="chart-head"><div><div class="chart-title">Load ramp · latency response</div><div class="chart-note">__CHART_NOTE__</div></div><div class="chart-key">__CHART_KEY__</div></div>
+          <div class="chart-grid">__CHART_OFFERED_SVG____CHART_LAT_SVG__</div>
+          <div class="chart-foot"><span>__CHART_FOOT_L__</span><span>__CHART_FOOT_R__</span></div>
+        </div>
+      </section>
+      <section class="section" id="code-map">
+        <div class="section-head"><div><div class="section-title">Where pressure lands</div><div class="section-desc">A real code-relationship map with runtime evidence overlaid only where the mapping is supported.</div></div><button class="text-action" id="fit-graph">Fit graph <span>↗</span></button></div>
+        <div class="panel graph-layout">
+          <div class="graph-panel">
+            <div class="graph-head"><div><div class="graph-head-title">API → code neighbourhood</div><div class="graph-head-sub">Select a node to inspect its source and evidence.</div></div><span class="graph-meta">__GRAPH_META__</span></div>
+            <div class="graph-canvas">
+              <div class="graph-topline"><span>__GRAPH_TOPLINE__</span><div class="graph-legend"><span><i class="legend-dot pressure"></i>Measured</span><span><i class="legend-dot static"></i>Static</span><span><i class="legend-dot selected"></i>Selected</span></div></div>
+              __GRAPH_SVG__
+            </div>
+            <div class="graph-footer"><span>__GRAPH_FOOT__</span><div class="graph-controls"><button class="graph-control active" id="control-all">All edges</button><button class="graph-control" id="control-pressure">Pressure only</button></div></div>
+          </div>
+          <aside class="inspector" aria-label="Selected code node details">
+            <div class="inspector-top"><div class="inspector-kind" id="inspect-kind">__INSPECT_KIND__</div><div class="inspector-title" id="inspect-title">__INSPECT_TITLE__</div><a class="source-link" href="#source" id="inspect-source">__INSPECT_SOURCE__ <span>↗</span></a></div>
+            <div class="inspect-section"><div class="inspect-label">Runtime evidence</div>__INSPECT_FACTS__</div>
+            <div class="finding-mini"><div class="finding-mini-top"><span>__FINDING_ID__</span><span>·</span><span>__FINDING_STATE__</span></div><h4 id="inspect-finding">__FINDING_TITLE__</h4><p id="inspect-explainer">__FINDING_BODY__</p><div class="finding-links">__FINDING_LINKS__</div></div>
+            <div class="inspect-section"><div class="inspect-label">Graph provenance</div><div class="fact"><span>Relation</span><strong id="inspect-relation">__INSPECT_RELATION__</strong></div><div class="fact"><span>Runtime timing on edge</span><strong id="inspect-timing">__INSPECT_TIMING__</strong></div></div>
+            <div class="inspector-bottom"><span id="inspect-foot">__INSPECT_FOOT__</span><button id="open-evidence">Open evidence ↗</button></div>
+          </aside>
+        </div>
+      </section>
+      <section class="section" id="operations">
+        <div class="section-head"><div><div class="section-title">HTTP operations</div><div class="section-desc">Only smoke-tested, read-safe operations contribute to the load run.</div></div><button class="text-action" id="all-operations">All operations <span>↗</span></button></div>
+        <div class="panel"><div class="table-wrap"><table class="ops-table"><thead><tr><th>Operation</th><th>Source map</th><th>p95 latency</th><th>Error rate</th><th>Achieved rate</th><th>SLO verdict</th></tr></thead><tbody>__OPS_ROWS__</tbody></table></div><div class="table-foot"><span>__OPS_FOOT_L__</span><span>Click an operation to inspect its code neighbourhood.</span></div></div>
+      </section>
+      <section class="section" id="experiments">
+        <div class="section-head"><div><div class="section-title">Investigation trail</div><div class="section-desc">The material steps from prediction to code-scored outcome.</div></div><button class="text-action" id="see-experiments">View experiments <span>↗</span></button></div>
+        <div class="panel trail">__TRAIL_EVENTS__</div>
+      </section>
+      <section class="section" id="evidence">
+        <div class="section-head"><div><div class="section-title">Evidence ledger</div><div class="section-desc">Stable references connect metrics, experiment outcomes, and source locations.</div></div><button class="text-action" id="copy-evidence">Copy evidence IDs <span>↗</span></button></div>
+        <div class="panel"><div class="table-wrap"><table class="ops-table"><thead><tr><th>ID</th><th>Kind</th><th>Observation</th><th>Source</th><th>Class</th></tr></thead><tbody>__EVIDENCE_ROWS__</tbody></table></div></div>
+      </section>
+      <section class="section" id="environment">
+        <div class="section-head"><div><div class="section-title">Environment &amp; validity</div><div class="section-desc">The boundaries of the measurement matter as much as the result.</div></div></div>
+        <div class="panel"><div class="table-wrap"><table class="ops-table"><thead><tr><th>Constraint</th><th>State</th><th>Meaning</th></tr></thead><tbody>__ENV_ROWS__</tbody></table></div></div>
+      </section>
+      <footer class="footer"><span class="footer-brand">Loadline / capacity with evidence</span><span>__FOOTER_STATS__</span></footer>
+    </div>
+  </main>
+</div>
+<div class="modal-backdrop" id="palette-backdrop" role="dialog" aria-modal="true" aria-label="Command palette">
+  <div class="command-palette"><div class="palette-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" width="17" height="17"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4 4"/></svg><input id="palette-input" placeholder="Jump to a view or action…" autocomplete="off"><span class="palette-hint">ESC</span></div><div class="palette-group"><div class="palette-label">Navigate</div><div class="palette-result selected" data-go="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Overview<span class="shortcut">G O</span></div><div class="palette-result" data-go="code-map"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="5" cy="6" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="12" cy="18" r="2"/><path d="M7 6h4l5.5-1M6.2 8l4.8 8.5M16.8 6.8l-3.6 9.7"/></svg>Code map<span class="shortcut">G C</span></div><div class="palette-result" data-go="experiments"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3"/></svg>Investigation trail<span class="shortcut">G I</span></div><div class="palette-result" data-go="evidence"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M7 3h7l4 4v13H6V4Z"/><path d="M14 3v5h4M9 12h6M9 16h6"/></svg>Evidence ledger<span class="shortcut">G E</span></div><div class="palette-result" data-action="copy-run"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg>Copy run ID<span class="shortcut">↵</span></div></div></div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>window.LOADLINE=__BOOT_JSON__;</script>
+<script>__APP_JS__</script>
+</body>
+</html>

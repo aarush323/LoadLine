@@ -8,9 +8,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from loadline.ui.banner import banner_rows, fancy_ok
 from loadline.ui.events import EventSink, RunEvent
 from loadline.ui.phases import PHASE_LABELS, Phase
-from loadline.ui.render import emit, use_color
+from loadline.ui.render import emit, is_tty, use_color
+from loadline.ui.spark import fmt_ms, vu_bar
 
 
 class BootProgress(Protocol):
@@ -56,9 +58,14 @@ class RunConsole:
         if not self.enabled():
             return
         rid = run_id or "pending"
-        emit(f"loadline run  run_id={rid}  repo={repo}", sys.stderr, use_ansi=use_color(self.no_color))
-        if self.run_dir:
-            emit(f"artifacts: {self.run_dir}", sys.stderr, use_ansi=use_color(self.no_color))
+        use_ansi = use_color(self.no_color)
+        if fancy_ok(no_color=self.no_color, json_mode=self.json_mode, quiet=self.quiet):
+            for text, style in banner_rows(run_id=run_id, repo=repo, run_dir=self.run_dir):
+                emit(text, sys.stderr, use_ansi=use_ansi, style=style)
+        else:
+            emit(f"loadline run  run_id={rid}  repo={repo}", sys.stderr, use_ansi=use_ansi)
+            if self.run_dir:
+                emit(f"artifacts: {self.run_dir}", sys.stderr, use_ansi=use_ansi)
         self._log("info", f"run started run_id={rid}")
 
     def phase_start(self, phase: Phase) -> None:
@@ -75,6 +82,11 @@ class RunConsole:
             return
         label = PHASE_LABELS[phase]
         suffix = f" ({detail})" if detail else ""
+        if self._active_phase == phase and is_tty(sys.stderr):
+            try:
+                suffix += f"  {time.monotonic() - self._phase_start:.1f}s"
+            except Exception:
+                pass
         emit(f"ok {label}{suffix}", sys.stderr, use_ansi=use_color(self.no_color), style="green")
         self._timeline.append({"phase": phase.value, "status": "ok", "detail": detail or ""})
         self._log("phase", f"done {phase.value} {detail or ''}")
@@ -122,6 +134,14 @@ class RunConsole:
     def investigate_event(self, source: str, summary: str, *, style: str | None = None) -> None:
         if not self.enabled() or self._active_phase != Phase.INVESTIGATE:
             return
+        if style is None:
+            low = summary.lower()
+            if "error" in low or "blocked" in low or "breach" in low:
+                style = "red"
+            elif summary.startswith(("→ repo", "← repo", "→ read_file", "← read_file")) or summary == "model request":
+                style = "dim"
+            elif "run_k6" in summary or summary.startswith("docker ") or "← k6" in summary:
+                style = "bold"
         prefix = f"  [investigate] {summary}"
         emit(prefix, sys.stderr, use_ansi=use_color(self.no_color), style=style)
         self._log("info", f"{source}: {summary}")
@@ -221,10 +241,17 @@ def _ledger_one_liner(kind: str, event: dict[str, Any]) -> str:
         if isinstance(ops, dict):
             for op_id, row in list(ops.items())[:2]:
                 if isinstance(row, dict) and row.get("p95_ms") is not None:
-                    p95_bits.append(f"p95_{op_id}={int(round(float(row['p95_ms'])))}ms")
+                    p95_bits.append(f"p95_{op_id}={fmt_ms(row['p95_ms'])}")
         tail = " ".join(p95_bits)
         if dropped:
             tail = f"{tail} dropped={dropped}".strip()
+        vu_s = ""
+        vus_max, vu_ceiling = result.get("vus_max"), result.get("vu_ceiling")
+        if vus_max is not None and vu_ceiling:
+            try:
+                vu_s = f"VUs {int(vus_max)}/{int(vu_ceiling)} {vu_bar(vus_max, vu_ceiling)}"
+            except (TypeError, ValueError):
+                vu_s = ""
         rate_s = f"rate={rate}" if rate is not None else ""
-        return f"← k6 {exp} {wave} {rate_s} {tail}".strip()
+        return f"← k6 {exp} {wave} {rate_s} {tail} {vu_s}".strip()
     return kind

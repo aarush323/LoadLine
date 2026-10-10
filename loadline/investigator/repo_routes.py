@@ -28,6 +28,23 @@ def _normalize_path(path: str) -> str:
     return p
 
 
+def _is_http_route_path(path: str) -> bool:
+    """Reject filesystem paths mistaken for HTTP routes in graph exports."""
+    p = path.strip()
+    if not p.startswith("/"):
+        return False
+    if len(p) > 200:
+        return False
+    lowered = p.lower()
+    if lowered.startswith(("/home/", "/users/", "/var/", "/tmp/")):
+        return False
+    if "/projects/" in lowered or "/integration/targets/" in lowered:
+        return False
+    if " " in p:
+        return False
+    return True
+
+
 def _record_route(
     routes: list[dict[str, Any]],
     seen: set[tuple[str, str]],
@@ -105,9 +122,16 @@ def _routes_from_handles_route(deps: InvestigationDeps) -> tuple[list[dict[str, 
         path = record.get("route") or record.get("path") or record.get("url_path")
         if not isinstance(path, str) or not path.strip():
             blob = json.dumps(record)
-            m = re.search(r'"(/[^"]+)"', blob)
-            path = m.group(1) if m else None
+            for m in re.finditer(r'"(/[^"]+)"', blob):
+                candidate = m.group(1)
+                if _is_http_route_path(candidate):
+                    path = candidate
+                    break
         if not path:
+            continue
+        path = str(path)
+        if not _is_http_route_path(path):
+            notes.append(f"skipped non-route HANDLES_ROUTE path: {path[:80]}")
             continue
         handler = record.get("symbol") or record.get("handler") or record.get("name")
         if handler is not None:

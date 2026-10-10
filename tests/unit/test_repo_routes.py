@@ -48,3 +48,37 @@ def test_discover_routes_from_handles_route_ndjson(tmp_path: Path):
     assert health["handler"] == "health"
     assert health["source"] == "HANDLES_ROUTE"
     assert out["exhaustive"] is True
+
+
+def test_discover_routes_skips_filesystem_handles_route_path(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    graph = MagicMock()
+    graph.capabilities.return_value = {"supported_relation_types": ["HANDLES_ROUTE"]}
+    graph.edges_supports_worktree.return_value = True
+    graph.run.return_value = GraphOutput(
+        args=["edges"],
+        text="",
+        ok=True,
+        records=[
+            {
+                "method": "GET",
+                "path": "/home/user/projects/neathacks/integration/targets/unreliable-blind",
+            },
+            {"method": "GET", "path": "/healthz", "symbol": "healthz", "file": "app/main.py", "line": 136},
+        ],
+    )
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    deps = InvestigationDeps(
+        repo_root=repo,
+        run_dir=run_dir,
+        run_id="r1",
+        ledger=Ledger.open(run_dir, "r1"),
+        graph=graph,
+        dirty_worktree=False,
+    )
+    out = discover_routes(deps)
+    paths = {r["path"] for r in out["routes"]}
+    assert "/healthz" in paths
+    assert not any("integration/targets" in p for p in paths)

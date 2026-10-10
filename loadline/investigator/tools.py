@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -141,9 +142,20 @@ def read_file(
     deps = ctx.deps
     if end_line - start_line > 200:
         return {"error": "range too large; use at most 200 lines per call"}
+    if Path(path).is_absolute() or "loadline/runs" in path.replace("\\", "/"):
+        return {
+            "error": (
+                "read_file is for repo-relative application source only; "
+                "use run_k6 return values for experiment metrics (not run-dir k6 logs)."
+            )
+        }
     target = (deps.repo_root / path).resolve()
     if not str(target).startswith(str(deps.repo_root.resolve())):
-        return {"error": "path outside repository"}
+        return {
+            "error": (
+                "path outside repository; read_file is for application source under the analyzed repo only."
+            )
+        }
     if _deny_path(path):
         return {"error": "path denied by policy"}
     if not target.is_file():
