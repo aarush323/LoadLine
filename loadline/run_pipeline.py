@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from loadline.adapters.runtime.boot_teardown import teardown_boot_outcome
+from loadline.adapters.runtime.boot_and_prepare import boot_and_prepare
 from loadline.adapters.runtime.compose_boot import boot_repository, persist_blocked_attempts
 from loadline.adapters.runtime.run_cleanup import RunCleanupState, register_run_cleanup, unregister_run_cleanup
 from loadline.core.ledger import Ledger
@@ -122,8 +123,78 @@ def run_loadline(
     ui.phase_done(Phase.PREFLIGHT)
 
     ui.phase_start(Phase.BOOT)
+    try:
+        from loadline.config.fingerprint import check_fingerprint_warning
+
+        _fp_warn = check_fingerprint_warning(repo)
+    except Exception:
+        _fp_warn = None
+    if _fp_warn:
+        print(_fp_warn, file=sys.stderr)
+    try:
+        from loadline.config.resolve import resolve as _resolve_cfg
+
+        _cfg = _resolve_cfg(repo)
+    except Exception:
+        _cfg = None
+    # Phase 8: run may load generated yaml only when repo has no .loadline.yaml
+    # and resolve without it would return a blocker. Otherwise ignore generated file.
+    try:
+        if (
+            _cfg is not None
+            and not (repo / ".loadline.yaml").is_file()
+            and (_cfg.target is None or _cfg.blocker is not None or _cfg.error is not None)
+        ):
+            from loadline.config.fingerprint import config_dir_for_repo
+
+            gen_path = config_dir_for_repo(repo) / "loadline.yaml"
+            if gen_path.is_file():
+                import yaml as _yaml
+
+                from loadline.config.schema import LoadlineHints as _Hints
+
+                raw = _yaml.safe_load(gen_path.read_text()) or {}
+                if isinstance(raw, dict):
+                    try:
+                        gen_hints = _Hints.model_validate(raw)
+                        # Use generated hints for boot (preserves zero-config repos that already target).
+                        from loadline.config.resolve import ResolvedConfig as _RC
+                        from loadline.config.target import Target as _T
+
+                        _t = None
+                        if gen_hints.app_service and gen_hints.container_port and gen_hints.health_path:
+                            _t = _T(
+                                service=gen_hints.app_service,
+                                port=int(gen_hints.container_port),
+                                health_path=str(gen_hints.health_path),
+                                origin=f"http://{gen_hints.app_service}:{gen_hints.container_port}{gen_hints.health_path}",
+                            )
+                        _cfg = _RC(
+                            hints=gen_hints,
+                            compose_file=getattr(gen_hints, "compose_file", None),
+                            target=_t,
+                            blocker=None if _t else _cfg.blocker,
+                            error=None,
+                            prepare=list(getattr(gen_hints, "prepare", []) or []),
+                            auth=dict(getattr(gen_hints, "auth", {}) or {}),
+                            start_set=getattr(getattr(gen_hints, "compose", None), "start_set", "all") or "all",
+                        )
+                    except Exception:
+                        pass
+    except Exception:
+        pass
     boot_progress = ui.boot_progress() if ui.enabled() else None
-    boot = boot_repository(repo, teardown=False, require_auth=False, progress=boot_progress)
+    if _cfg is not None:
+        boot = boot_and_prepare(
+            repo,
+            hints=_cfg.hints,
+            config=_cfg,
+            teardown=False,
+            require_auth=False,
+            progress=boot_progress,
+        )
+    else:
+        boot = boot_and_prepare(repo, teardown=False, require_auth=False, progress=boot_progress)
     run_dir_early = _ensure_blocked_artifacts(repo, boot)
     if run_dir_early:
         ui.set_run_dir(run_dir_early)
@@ -154,6 +225,17 @@ def run_loadline(
     ui.set_run_dir(run_dir)
     network = boot.boot["network"]
     hosts = frozenset(s["name"] for s in boot.boot["services"])
+    # Phase 9: closure allowlist is target host from resolved_target.json (not db).
+    try:
+        _rt_path = run_dir / "resolved_target.json"
+        if _rt_path.is_file():
+            import json as _json
+
+            _rt = _json.loads(_rt_path.read_text())
+            if isinstance(_rt, dict) and _rt.get("start_set") == "closure" and _rt.get("service"):
+                hosts = frozenset({str(_rt["service"])})
+    except (OSError, ValueError):
+        pass
 
     def _teardown() -> None:
         teardown_boot_outcome(boot, repo)

@@ -2,14 +2,27 @@
 
 **Loadline** boots a repo’s app in Docker, load-tests the HTTP APIs, and runs an **Investigator** agent that reads the code and writes an evidence-backed report (or a clear **blocked** reason).
 
-There are **two commands** teammates care about:
+**Onboarding:** [setup.md](setup.md) — install, `.env`, blind eval, FastAPI blocker, absolute paths.
+
+### Commands (from Loadline repo root)
+
+```bash
+uv run loadline load  --repo /absolute/path/to/app     # trial boot → save config (stderr progress; --quiet)
+uv run loadline run   --repo /absolute/path/to/app     # boot → investigator → report.md (--fast, --verbose)
+uv run loadline dashboard                              # TTY run browser
+uv run loadline dashboard --serve                      # web UI on :8123
+uv run loadline doctor --check-model && uv run loadline doctor --cleanup
+```
 
 | Command | One line |
 |---------|----------|
 | **`loadline load`** | “Can we boot this repo? Save the boot config.” |
 | **`loadline run`** | “Boot it, investigate under load, write the report.” |
+| **`loadline dashboard`** | “Browse past runs (terminal or `--serve`).” |
 
 `run` does **not** call `load`. You run `load` yourself when you want a saved config before a full run.
+
+**Primary integration target (blind):** `integration/targets/unreliable-blind` — see [setup.md](setup.md) §5.
 
 ---
 
@@ -46,6 +59,8 @@ uv run loadline load /path/to/app-repo --write-to-repo
 
 Output is a path like `wrote .../loadline.yaml`, not a performance report.
 
+**Progress:** `load` prints steps on **stderr** by default (Docker → discover → resolve → trial boot with compose/health ticks → write config). Use **`--quiet`** to hide progress; blockers still print.
+
 ### Setup agent (planned, not the default path today)
 
 Today, `load` is **deterministic** (steps above only).
@@ -72,7 +87,15 @@ uv run loadline run /path/to/app-repo
 4. **Report** — The agent’s **last message** is written to `report.md` (and minimal `report.json`). Printed to the terminal unless you pass `--no-report-print`.
 5. **Teardown** — Stop containers/networks/volumes labelled for this run.
 
-Optional: `loadline dashboard` / `loadline dashboard --serve` to browse past runs after you have some `run_dir`s.
+### `loadline dashboard`
+
+After you have runs under `$LOADLINE_HOME/runs/`:
+
+```bash
+uv run loadline dashboard
+uv run loadline dashboard --run <run_id_prefix>
+uv run loadline dashboard --serve --port 8123
+```
 
 ---
 

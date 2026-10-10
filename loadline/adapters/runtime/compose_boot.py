@@ -662,11 +662,44 @@ def boot_repository(
 
     policy_input = dict(raw)
     policy_input["x_loadline_app"] = app_service
-    policy = apply_sandbox_policy(
-        policy_input,
-        run_network=run_network,
-        repo_dotenv=load_repo_dotenv(repo),
-    )
+    # Phase 9: closure uses started_services; default stays all.
+    _start_set = "all"
+    try:
+        if hints is not None:
+            if isinstance(hints, dict):
+                _cs = (hints.get("compose") or {})
+                _start_set = _cs.get("start_set", "all") if isinstance(_cs, dict) else "all"
+            else:
+                _cs = getattr(hints, "compose", None)
+                _start_set = getattr(_cs, "start_set", "all") or "all"
+    except Exception:
+        _start_set = "all"
+    if _start_set == "closure":
+        try:
+            from loadline.core.sandbox_policy import closure_started_set
+
+            _started = closure_started_set(raw, app_service)
+        except Exception:
+            _started = None
+        if _started is None:
+            policy = apply_sandbox_policy(
+                policy_input,
+                run_network=run_network,
+                repo_dotenv=load_repo_dotenv(repo),
+            )
+        else:
+            policy = apply_sandbox_policy(
+                policy_input,
+                run_network=run_network,
+                repo_dotenv=load_repo_dotenv(repo),
+                started_services=set(_started),
+            )
+    else:
+        policy = apply_sandbox_policy(
+            policy_input,
+            run_network=run_network,
+            repo_dotenv=load_repo_dotenv(repo),
+        )
     if progress is not None:
         if policy.action == "refuse":
             progress.boot_note(f"boot: sandbox policy refused ({policy.blocker_code})")
@@ -852,6 +885,13 @@ def boot_repository(
                                 "run_dir": str(run_dir),
                                 "network": run_network,
                             }
+                            # Phase 9: list not_started when closure filtered the plan.
+                            try:
+                                _ns = list(getattr(policy, "not_started", []) or [])
+                                if _ns:
+                                    boot_info["not_started"] = _ns
+                            except Exception:
+                                pass
                             return BootOutcome(
                                 status="booted",
                                 exit_code=0,

@@ -18,7 +18,7 @@ def test_blocked_boot_writes_profile_without_docker(tmp_path: Path, monkeypatch)
     )
     run_dir = tmp_path / "state" / "runs" / "runblocked1"
     run_dir.mkdir(parents=True)
-    with patch("loadline.run_pipeline.boot_repository", return_value=boot):
+    with patch("loadline.run_pipeline.boot_and_prepare", return_value=boot):
         with patch("loadline.core.auth.require_model_auth", return_value=None):
             result = run_loadline(tmp_path, require_auth=False)
     assert result.exit_code == 10

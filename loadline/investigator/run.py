@@ -183,7 +183,7 @@ async def run_investigation(
         boot=boot_rec,
         allowed_hosts=hosts,
         network=net,
-        auth_profiles=_sealed_auth_profiles(repo_root),
+        auth_profiles={**_sealed_auth_profiles(repo_root), **(boot_rec.get("auth_profiles") or {})},
         console=console,
     )
 

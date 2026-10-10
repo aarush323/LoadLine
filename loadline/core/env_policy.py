@@ -63,6 +63,7 @@ class EnvPolicyOutcome:
     needs_input_summary: str | None = None
     replacements: list[tuple[str, str, str]] = ()  # key, before, after
     generated_secrets: list[str] = ()
+    limitations: tuple[str, ...] = ()
 
 
 def _parse_env(env: Any) -> dict[str, str]:
@@ -242,9 +243,29 @@ def apply_env_policy(
     *,
     repo_dotenv: dict[str, str] | None = None,
     generated: dict[str, str] | None = None,
+    placeholders: dict[str, Any] | set[str] | list[str] | None = None,
 ) -> EnvPolicyOutcome:
+    # New placeholder shape: env value may be {"placeholder": True} (from yaml).
+    # Collect placeholder keys without breaking old string shape.
+    placeholder_keys: set[str] = set()
+    if isinstance(placeholders, dict):
+        for k, v in placeholders.items():
+            if isinstance(v, dict) and v.get("placeholder"):
+                placeholder_keys.add(str(k))
+            elif v is True:
+                placeholder_keys.add(str(k))
+    elif isinstance(placeholders, (set, list, tuple)):
+        placeholder_keys.update(str(k) for k in placeholders)
+    raw_env_dict = env if isinstance(env, dict) else {}
+    for k, v in (raw_env_dict.items() if isinstance(raw_env_dict, dict) else []):
+        if isinstance(v, dict) and v.get("placeholder"):
+            placeholder_keys.add(str(k))
     parsed = _parse_env(env)
-    if not parsed:
+    # _parse_env stringifies dict values; restore placeholder markers as empty for now.
+    for k in list(placeholder_keys):
+        if k in parsed:
+            parsed[k] = ""
+    if not parsed and not placeholder_keys:
         return EnvPolicyOutcome(env={})
 
     dotenv = dict(repo_dotenv or {})
@@ -254,10 +275,16 @@ def apply_env_policy(
 
     out: dict[str, str] = {}
     replacements: list[tuple[str, str, str]] = []
+    limitations: list[str] = []
     needs_input = False
     needs_summary: str | None = None
 
     for key, raw in parsed.items():
+        if key in placeholder_keys:
+            # Placeholder: non-empty in-memory value, limitation, no stub word.
+            out[key] = f"placeholder-{key}-value"
+            limitations.append(f"dependency not replaced: {key}")
+            continue
         before = raw
         resolved, need, msg = _interpolate_value(raw, effective)
         if need:
@@ -293,10 +320,17 @@ def apply_env_policy(
             replacements.append((key, before, resolved))
         out[key] = resolved
 
+    # Ensure placeholder keys absent from parsed (e.g. empty env) still get values.
+    for key in placeholder_keys:
+        if key not in out:
+            out[key] = f"placeholder-{key}-value"
+            limitations.append(f"dependency not replaced: {key}")
+
     return EnvPolicyOutcome(
         env=out,
         needs_input=needs_input,
         needs_input_summary=needs_summary,
         replacements=replacements,
         generated_secrets=generated_keys,
+        limitations=tuple(limitations),
     )

@@ -351,6 +351,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     run_p.add_argument("--no-color", action="store_true", help="Disable ANSI colors.")
     run_p.add_argument("--no-report-print", action="store_true", help="Do not print report.md to stdout.")
+    load_p = sub.add_parser(
+        "load",
+        help="Figure out config, try a boot, write config, tear down.",
+    )
+    load_p.add_argument("--repo", type=Path, default=Path("."))
+    load_p.add_argument(
+        "--write-to-repo",
+        action="store_true",
+        help="Also copy the generated config to repo .loadline.yaml.",
+    )
+    load_p.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Write loadline.proposed.yaml and print diff instead of overwriting.",
+    )
+    load_p.add_argument("--quiet", action="store_true", help="Errors only on stderr; hide progress.")
     report_p = sub.add_parser("report", help="Show a finished run report.")
     report_sub = report_p.add_subparsers(dest="report_cmd")
     show_p = report_sub.add_parser("show", help="Print report.md from a run directory.")
@@ -405,6 +421,16 @@ def main(argv: list[str] | None = None) -> int:
             print_report=not args.no_report_print and not args.json,
         )
         return result.exit_code
+    if args.command == "load":
+        from loadline.load import load_repo
+
+        load_console = RunConsole(quiet=args.quiet, verbose=False, json_mode=False)
+        return load_repo(
+            args.repo.resolve(),
+            write_to_repo=args.write_to_repo,
+            refresh=args.refresh,
+            console=load_console,
+        )
     if args.command == "report" and args.report_cmd == "show":
         return report_show(args.run_dir, as_json=args.json, dashboard=args.dashboard)
     if args.command == "dashboard":

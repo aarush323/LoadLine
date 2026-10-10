@@ -34,6 +34,94 @@ class PolicyResult:
     diffs: list[PolicyDiff] = field(default_factory=list)
     blocker_code: str | None = None
     blocker_summary: str | None = None
+    notes: list[str] = field(default_factory=list)
+    not_started: list[str] = field(default_factory=list)
+
+
+def _env_values_of_service(svc: dict[str, Any]) -> list[str]:
+    env = svc.get("environment")
+    if isinstance(env, dict):
+        return [str(v) for v in env.values() if isinstance(v, (str, int, float))]
+    if isinstance(env, list):
+        out: list[str] = []
+        for item in env:
+            if isinstance(item, str) and "=" in item:
+                out.append(item.split("=", 1)[1])
+            elif isinstance(item, str):
+                out.append(item)
+        return out
+    return []
+
+
+def _hostname_tokens(text: str) -> set[str]:
+    import re
+    from urllib.parse import urlparse
+
+    tokens: set[str] = set()
+    # URL hostnames.
+    for m in re.finditer(r"https?://([^:/\s'\"]+)", text):
+        host = m.group(1).strip()
+        if host:
+            tokens.add(host)
+            # Also add without port? Already host only.
+    # Whole tokens split by non-alphanumeric (keep - _ . for splitting? Must not substring-match).
+    # Split on anything except alnum, -, _; then compare whole token equality by caller.
+    for tok in re.split(r"[^A-Za-z0-9_-]+", text):
+        if tok:
+            tokens.add(tok)
+    # Also try urlparse for each whitespace piece.
+    for piece in text.split():
+        try:
+            p = urlparse(piece if "://" in piece else f"http://{piece}")
+            if p.hostname:
+                tokens.add(p.hostname)
+        except (ValueError, AttributeError):
+            pass
+    return tokens
+
+
+def closure_started_set(compose: dict[str, Any], target: str) -> set[str]:
+    """Target + transitive depends_on + whole-hostname-token env matches. No command scan."""
+    from loadline.core.readiness import depends_on_service_names
+
+    services = compose.get("services") or {}
+    if not isinstance(services, dict) or target not in services:
+        return {target} if target else set()
+    started: set[str] = {target}
+    # Transitive depends_on.
+    queue = [target]
+    while queue:
+        cur = queue.pop()
+        svc = services.get(cur)
+        if not isinstance(svc, dict):
+            continue
+        for dep in depends_on_service_names(svc):
+            if dep not in started and dep in services:
+                started.add(dep)
+                queue.append(dep)
+    # Hostname tokens from target env only (not command, not config files).
+    tgt_svc = services.get(target)
+    env_texts = _env_values_of_service(tgt_svc) if isinstance(tgt_svc, dict) else []
+    combined = "\n".join(env_texts)
+    tokens = _hostname_tokens(combined)
+    for name in services:
+        if name in started:
+            continue
+        # Whole-token match only; "app" must not match inside another token.
+        if name in tokens:
+            started.add(name)
+            # Add its transitive deps as well.
+            queue = [name]
+            while queue:
+                cur = queue.pop()
+                svc = services.get(cur)
+                if not isinstance(svc, dict):
+                    continue
+                for dep in depends_on_service_names(svc):
+                    if dep not in started and dep in services:
+                        started.add(dep)
+                        queue.append(dep)
+    return started
 
 
 def _service_resources(service: dict[str, Any], role: str) -> None:
@@ -133,22 +221,79 @@ def apply_sandbox_policy(
     *,
     run_network: str,
     repo_dotenv: dict[str, str] | None = None,
+    started_services: set[str] | None = None,
 ) -> PolicyResult:
     """Mutate a compose dict in place conceptually; returns validated copy."""
+    # Golden path: None or all behaves as today.
+    if started_services is not None and len(started_services) == 0:
+        started_services = set()
     plan = deepcopy(compose)
     diffs: list[PolicyDiff] = []
+    notes: list[str] = []
     shared_generated: dict[str, str] = {}
     services = plan.get("services") or {}
     if not isinstance(services, dict):
         return PolicyResult(action="refuse", blocker_code="policy_refused", blocker_summary="services must be a mapping")
 
-    drop_outcome = _drop_unsandboxable_host_bind_services(plan, diffs)
-    if drop_outcome is not None:
-        return drop_outcome
+    if started_services is None:
+        # Today's refuse/drop behavior unchanged.
+        drop_outcome = _drop_unsandboxable_host_bind_services(plan, diffs)
+        if drop_outcome is not None:
+            return drop_outcome
 
-    services = plan.get("services") or {}
+        services = plan.get("services") or {}
 
-    for name, svc in services.items():
+    else:
+        # Closure: outside started set violations become notes, not refuses.
+        all_names = set((plan.get("services") or {}).keys())
+        started = set(started_services) & all_names
+        not_started = sorted(all_names - started)
+        # Record not_started and drop them from plan (they will not start).
+        for ns in not_started:
+            svc = (plan.get("services") or {}).get(ns)
+            # Violation outside → note (including ipc:host and docker socket).
+            note = None
+            if isinstance(svc, dict):
+                if svc.get("privileged"):
+                    note = f"service {ns} requests privileged mode"
+                elif svc.get("devices"):
+                    note = f"service {ns} requests devices"
+                elif svc.get("cap_add"):
+                    note = f"service {ns} adds capabilities"
+                elif any(k in svc and svc[k] in ("host", "container:host") for k in ("pid", "ipc", "network_mode")):
+                    for k in ("pid", "ipc", "network_mode"):
+                        if k in svc and svc[k] in ("host", "container:host"):
+                            note = f"service {ns} uses host {k}"
+                            break
+                elif _service_has_host_bind(svc):
+                    # Docker socket (/var/run/docker.sock) follows same rule.
+                    note = f"service {ns} has a host bind mount"
+                elif svc.get("network_mode"):
+                    note = f"service {ns} sets network_mode"
+                elif any("host-gateway" in str(x) for x in (svc.get("extra_hosts") or [])):
+                    note = f"service {ns} uses host-gateway"
+            if note:
+                notes.append(f"note (not started): {note}")
+                diffs.append(PolicyDiff(2, f"note (not started): {note}", ns, None))
+            else:
+                diffs.append(PolicyDiff(2, f"not started: {ns}", ns, None))
+            (plan.get("services") or {}).pop(ns, None)
+        # Strip depends_on refs to not_started.
+        for _name, _svc in list((plan.get("services") or {}).items()):
+            if not isinstance(_svc, dict):
+                continue
+            if "depends_on" in _svc:
+                updated = _strip_depends_on(_svc.get("depends_on"), set(not_started))
+                if updated is None:
+                    _svc.pop("depends_on", None)
+                else:
+                    _svc["depends_on"] = updated
+        services = plan.get("services") or {}
+        # Continue to per-service checks below (inside set still refuses).
+        # Attach not_started for return.
+        plan["_loadline_not_started"] = not_started
+
+    for name, svc in list(services.items()):
         if not isinstance(svc, dict):
             continue
         if svc.get("privileged"):
@@ -242,4 +387,7 @@ def apply_sandbox_policy(
     networks[run_network] = {"internal": True}
     plan["networks"] = {run_network: networks[run_network]}
 
-    return PolicyResult(action="rewrite", plan=plan, diffs=diffs)
+    not_started_out = list(plan.pop("_loadline_not_started", [])) if isinstance(plan, dict) else []
+    if started_services is None:
+        return PolicyResult(action="rewrite", plan=plan, diffs=diffs)
+    return PolicyResult(action="rewrite", plan=plan, diffs=diffs, notes=notes, not_started=not_started_out)
