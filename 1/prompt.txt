@@ -1,0 +1,554 @@
+he five things I'd fix before implementation
+1. Migration and authentication order is inconsistent
+The run flow says:
+Boot → health probe → prepare/migrations/seed → authentication
+But the build plan implements authentication before the prepare/seed phase.
+Both can be wrong depending on the application. A health check may require the database schema, and login may require a seeded user.
+Fix: distinguish process reachability from application readiness. Start the required containers, run declared migrations and seeding at the appropriate point, then verify readiness and authentication. The sequence should support the actual app's dependencies rather than assume one universal startup order.
+2. A 200 response does not necessarily mean the app is ready
+The plan considers /, /docs and /openapi.json as fallback health candidates. Those endpoints can return 200 even when the database or a downstream dependency is broken.
+Fix: distinguish three states:
+- Reachable: the application responds over HTTP.
+- Ready: a credible readiness check passes.
+- Verified: readiness, required setup steps, and declared authentication checks all pass.
+If only /docs responds and no meaningful readiness signal exists, report that limitation. Don't claim the whole environment has been verified.
+3. stub: true is not a working stub
+Giving an application a fake Stripe or email credential does not create a local replacement for that service. The application may still make an outbound request, fail because egress is denied, or crash during startup.
+Fix: distinguish a fake credential from an actual stubbed dependency. A dependency is stubbed only when requests are redirected to a functioning, isolated substitute. Otherwise, declare the dependency unavailable and report the limitation or required input.
+4. The repository fingerprint needs broader coverage
+The plan hashes Compose files, Dockerfiles and .env.example. But its generated configuration can also depend on login handlers, settings files and seed scripts.
+A change to login.py could make the auth configuration stale even when none of those hashed files changed.
+Fix: include the files that informed the configuration, particularly those identified in the evidence map. Treat a fingerprint mismatch as a warning, not an automatic reason to regenerate configuration. That lets the same config remain pinned for a before/after performance comparison.
+5. Don't make the Setup agent do work deterministic code already handles
+The plan says code should resolve service names, ports and health candidates, but Phase 2 then builds the agent to generate targets, compose and env.
+That's somewhat redundant.
+Fix: deterministic detection should propose and validate obvious values. The Setup agent should focus on ambiguity and application-specific requirements—credentials, login mechanics, migrations and meaningful seed data. It can still review the whole configuration and correct mistakes; it just shouldn't be the default mechanism for discovering a Compose port.
+One more implementation detail: the missing .env workaround must account for Compose resolving env_file paths relative to the Compose project, not simply copy .env.example somewhere under LOADLINE_HOME and assume Compose will find it. Validate the resolved Compose model after applying the workaround.
+The build order I'd commit to
+Phase 0
+Trust the measurements
+Canonical target, real k6 smoke probe, correct status counters, meaningful transport errors, bounded timeouts and cleanup.
+
+
+
+Phase 1
+Finish config resolution
+Schema, existing .loadline.yaml compatibility, deterministic resolver, fingerprint, and loadline check. Keep zero-config detection for unambiguous repos.
+
+
+
+Phase 2
+Add loadline setup
+Setup Skill, evidence-backed configuration, bounded boot-and-revise loop, and preservation of existing user edits.
+
+
+
+Phase 3
+Support meaningful authenticated tests
+Authentication profiles, then migrations and seed-data preparation integrated in the correct dependency order. Validate against the full-stack FastAPI target.
+
+
+
+Later
+Broaden compatibility
+Cookie/CSRF flows, multiple targets, signup-based bootstrap and automatic setup invocation only when real use cases justify them.
+
+
+
+Final verdict
+I'd approve this plan with those corrections. Its strongest idea is that setup creates a repeatable, verifiable environment, while Analyze remains free to investigate whatever the evidence suggests.
+Keep the initial product boundary honest: Docker Compose-based HTTP applications, with meaningful limitations reported for unsupported dependencies and authentication. Don't promise universal application compatibility yet.
+And keep Phase 0 ahead of everything else. Until k6 measurements are trustworthy, the setup agent might successfully boot an application and the Investigator might produce a convincing report, but neither guarantees the performance conclusions are true.
+The best first milestone is simple: both unreliable-blind and the full-stack FastAPI template boot through the same target-resolution path, and a real k6 container correctly distinguishes HTTP 200, 404 and 503. Once that passes, build the Setup loop on top of it.# Loadline: Setup and Configuration Plan
+
+Status: proposed. Written against the branch as described (single investigator agent with 3 tools; pre-agent boot in `compose_boot.py`; `TargetGuard`; `apply_env_policy`; `discover_profile` / `discover_capabilities`). Modules marked **(new)** are proposals. YAML field names are illustrative until implemented.
+
+This plan extends what already exists instead of replacing it: the `.loadline.yaml` hints file (`app_service`, `container_port`, `health_path`), `loadline analyze --boot --json` (status / blocker / remediation / retryable), `loadline doctor`, the `loadline-run` skill, the `docker_cmd` runtime wrapper, and the rule that nothing is written into the target repo.
+
+---
+
+## 1. Goal and principles
+
+**Goal:** make an unfamiliar containerized HTTP app testable (booted, reachable, authenticated where possible, with some data) without per-repo changes to Loadline, and say plainly when that is not possible.
+
+1. **Code resolves and verifies. Agents propose and explain.** Hostnames, ports, health routes and sandbox rules come from deterministic code. The agent fills in what code cannot know.
+2. **One resolved target, written once, read everywhere.** Boot health check, k6, auth, allowlist and the investigator prompt all read the same record.
+3. **A config is not trusted until it has booted and answered a real request from the k6 image.** A plausible YAML is not proof.
+4. **Never invent.** No made-up third-party credentials, hostnames, ports or shell commands.
+5. **Never change what is under test.** No tuning of pool sizes, workers, timeouts or flags that affect performance. Anything behavior-affecting is listed in the report.
+6. **Setup is optional for simple repos.** If detection is unambiguous and the probe passes, `run` works with no YAML (zero-config path). This keeps today's working targets working.
+7. **Honest outcomes:** `verified`, `limited` (works, with named gaps) or `blocked` (cannot run, with the reason).
+8. **Don't overfit.** Nothing in detection, the resolver or the setup skill may name a specific repo, template, service name or env var convention as a requirement. Conventions (for example a seeded-admin variable pair) are detection hints only. Every rule should be testable on at least two unrelated repos.
+
+---
+
+## 2. Architecture at a glance
+
+| Piece | Kind | Responsibility |
+|---|---|---|
+| `loadline.yaml` | file (human-editable) | How to start and reach the app. Never says what to test. |
+| Detection | code (extends `discover_profile` / `discover_capabilities`) | Facts: compose services, ports, healthchecks, env vars, login-like routes. |
+| Resolver | code **(new)** | Merge detection + YAML into one `ResolvedConfig` and one `Target`. |
+| Boot | code (existing `compose_boot`) | Sandboxed bring-up from `ResolvedConfig`. Unchanged safety rules. |
+| Probes | code **(new)** | Reach the target from the k6 image; run the auth probe. |
+| Setup loop | agent **(new)** | Proposes YAML, uses `try_boot` to repair failures. Bounded. |
+| Setup skill | text **(new)** | Teaches the setup agent how to inspect repos. |
+| Analyze agent | agent (existing) | Unchanged loop. Receives the target, auth profile names and limitations as facts. |
+
+### Commands
+
+1. `loadline setup <repo>`: detection, then the setup agent proposes a config, then a `try_boot` loop. Writes the result to `LOADLINE_HOME/configs/<repo-key>/loadline.yaml` and prints the path. `--write-to-repo` copies it to `.loadline.yaml` for users who want it committed. Nothing is written into the target repo by default.
+2. `loadline check <repo>`: no LLM. This is today's `loadline analyze --boot --json`, extended: same JSON shape (`status`, `blocker`, `remediation`, `retryable`), plus `target`, `auth` and `limitations`. Validate, boot, probe target, probe auth, tear down.
+3. `loadline run <repo>`: resolve, boot, probe, investigate, report. If no config exists, tries the zero-config path. If ambiguous or failing, exits with a clear message pointing at `setup`.
+
+**Config lookup order:** repo `.loadline.yaml` (user-owned, wins), then the generated config in `LOADLINE_HOME`, then detection only. Same schema in both files.
+
+### Run flow (`loadline run`)
+
+1. Preflight (model auth as today).
+2. Resolve: detection + `loadline.yaml` become `ResolvedConfig`; compute `Target`; write `run_dir/resolved_target.json`.
+3. Boot: sandbox policy, internal network, compose up, egress proof (all as today).
+4. Wait healthy at `Target.health_url`.
+5. Probe from the k6 image: GET the health URL. Fail the run here, with k6's error text, if it does not return 2xx.
+6. Prepare steps (migrations, seed), if declared.
+7. Auth probe, if declared.
+8. Start investigator with: origin, target names, auth profile names, data and limitation notes.
+9. Teardown; write report with an Environment header.
+
+### Preflight (`loadline doctor`) additions
+
+- Docker daemon reachable and Compose v2 present, always through `docker_cmd` (Podman is the stated intent; new code must not hardcode `docker`).
+- Pinned k6 and egress-probe images present or pullable. Offline hosts fail early with the pull command instead of failing mid-run.
+- Free disk under `LOADLINE_HOME`.
+- Entire graph status. Degraded is allowed and is reported as such.
+- Model auth for `setup` too: missing `LOADLINE_MODEL` or provider key exits before any Docker work, same as `run`.
+
+---
+
+## 3. Modules
+
+```
+loadline/
+  config/                    (new)
+    schema.py                pydantic models for loadline.yaml (unknown keys rejected)
+    detect.py                ranks services, ports, health candidates, env classes, login-like routes
+    resolve.py               resolve(repo, yaml_or_none) -> ResolvedConfig
+    target.py                frozen Target dataclass; writes resolved_target.json
+    fingerprint.py           hash of compose files, Dockerfiles, .env.example
+  adapters/runtime/
+    compose_boot.py          (existing) takes ResolvedConfig instead of rediscovering
+    probe.py                 (new) k6-image reachability probe + auth probe
+    prepare.py               (new) runs allowed prepare steps in sandbox containers
+  setup/                     (new)
+    agent.py                 setup loop (Pydantic AI, same style as investigator)
+    tools.py                 repo, read_file (reused), check_config, try_boot, write_config
+  investigator/              (existing)
+    k6_tool.py               reads Target only; builds auth via setup() login
+agents/
+  setup_prompt.md            (new)
+skills/setup/SKILL.md        (new) the Setup Skill
+```
+
+---
+
+## 4. Config schema (illustrative)
+
+Same schema in `.loadline.yaml` (user-owned, in the repo) and in the setup-generated copy under `LOADLINE_HOME`. Examples below call it `loadline.yaml` for short.
+
+```yaml
+version: 1
+
+targets:                           # one entry in v1; list so gateways/microservices fit later
+  - name: api
+    service: backend               # compose service k6 will hit
+    port: 8000                     # container port
+    health_path: /api/v1/utils/health-check/
+    host_header: null              # set only if the app rejects the service name (see §7)
+    scheme: http
+
+compose:
+  files: [compose.yml]             # optional; detected if absent
+  profiles: []                     # compose profiles to enable
+  ready_timeout_s: 120
+
+env:                               # only declarations; real values never live here
+  SECRET_KEY: {generate: true}
+  POSTGRES_PASSWORD: {generate: true}
+  STRIPE_API_KEY: {stub: true}         # fake value, recorded as a limitation
+  SMTP_PASSWORD: {needs_input: true}   # user must supply via LOADLINE_ENV_SMTP_PASSWORD
+  APP_MODE: {set: development, evidence: "compose.yml:31"}   # behavior-affecting, reported
+
+prepare:                           # one-time steps after boot, before load
+  - name: migrate
+    service: backend
+    run: "alembic upgrade head"
+    required: true
+  - name: seed
+    service: backend
+    run: "python app/initial_data.py"
+    required: false
+
+auth:                              # profiles by name; the agent sees names, never secrets
+  default_user:
+    kind: login
+    request:
+      method: POST
+      path: /api/v1/login/access-token
+      encoding: form               # form | json
+      fields:
+        username: {env: FIRST_SUPERUSER}
+        password: {env: FIRST_SUPERUSER_PASSWORD}
+    token: {from: json, field: access_token}
+    use: {header: Authorization, scheme: Bearer}
+    verify: {method: GET, path: /api/v1/users/me}   # must be 2xx with token, 401/403 without
+
+meta:                              # written by setup; safe to edit or delete
+  fingerprint: "sha256:..."
+  verified_at: "2026-10-10T19:40:00+05:30"
+  evidence:
+    targets.0.service: "compose.yml:12"
+    targets.0.port: "compose.yml:15"
+    auth.default_user: "backend/app/api/routes/login.py:23"
+  limitations:
+    - "SMTP not available: email endpoints untested"
+```
+
+### Schema rules (enforced by code)
+
+- Unknown keys are an error (catches typos).
+- Legacy hints keys (`app_service`, `container_port`, `health_path`) are accepted as aliases for `targets[0]`, so existing `.loadline.yaml` files keep working unchanged.
+- No secret values in the file. `env` entries are one of: `generate`, `stub`, `needs_input`, `set` (non-secret, needs `evidence`). Credentials are referenced as `{env: NAME}`, resolved at runtime from the same environment the app received.
+- `prepare.run` must appear verbatim in a text file of the repo (Makefile, package.json, README, compose `command`, scripts). Otherwise rejected as `command_not_in_repo`.
+- `targets[].service` must exist in the resolved compose model.
+- Performance knobs (pool sizes, worker counts, concurrency, timeouts) are rejected from `env.set` unless the user typed them and marks them `user_set: true`; they then appear in the report.
+- Every setup-written field outside `meta` needs an `evidence` pointer or is flagged `unverified`.
+
+---
+
+## 5. Resolution rules (all deterministic)
+
+### 5.1 Read the real compose model
+Use `docker compose config --format json` for merged files, overrides, profiles and `${VAR:-default}` interpolation. Do not hand-parse YAML. Unresolved variables become `needs_input` or `generate` candidates.
+
+### 5.2 Choose the target service
+Rank services; show the ranking and reasons.
+
+| Signal | Effect |
+|---|---|
+| Has `build:` (your code, not an off-the-shelf image) | up |
+| Exposes or publishes a port (`ports`, `expose`, Dockerfile `EXPOSE`) | up |
+| Build context contains handler files from the route inventory | up strongly |
+| Compose HTTP healthcheck present | up |
+| Image is infrastructure (postgres, mysql, mariadb, mongo, redis, memcached, rabbitmq, kafka, elasticsearch, opensearch, minio, mailpit, adminer, pgadmin) | excluded |
+| Image or context is a proxy (traefik, nginx, caddy, haproxy) | down: target the app service directly |
+| Static frontend (package.json with vite/next/react, no server routes) | down |
+
+- One clear winner: use it.
+- Tie or no winner: setup agent chooses (must cite evidence); `run` without YAML refuses and lists candidates.
+- If a proxy is the only HTTP entry, target the proxy and record `limitation: measurements include proxy`.
+
+### 5.3 Port
+Candidate order: YAML, compose healthcheck URL, `--port` / `PORT` in command or env, `expose` / `ports` target, Dockerfile `EXPOSE`. The probe tries them in order; first that answers HTTP wins; all attempts are logged.
+
+### 5.4 Health route
+Candidates: compose healthcheck, route inventory entries matching health/ready/ping/status, `/`, `/docs`, `/openapi.json`. The probe picks the first 2xx. If none, but TCP connects: outcome is `limited` ("no health route; readiness is TCP only").
+
+### 5.5 Env classification
+
+| Class | Examples | Default action |
+|---|---|---|
+| App-owned secret | `SECRET_KEY`, DB password, seeded admin password | Keep repo value, or `generate` if the app rejects placeholders. Same variable name gets the same generated value in every service, and login reads the same source. |
+| Third-party credential | Stripe, AWS, SendGrid, OpenAI keys | `stub` (fake value pointing at sandbox) and record a limitation; `needs_input` if the app crashes on a fake |
+| External URL | webhook, SaaS base URL | rewrite to `sandbox.invalid` (existing policy) |
+| Internal URL | DB host, cache host | leave as compose wiring |
+| Mode or flag | `ENV=development` | agent may set with evidence; reported as behavior-affecting |
+| Performance knob | pool size, workers | never touched |
+
+### 5.6 Prepare steps
+Run inside the named service container on the run network, with a timeout. Repo-verbatim rule applies. `required: true` failure means `blocked`; `required: false` failure means `limited`.
+
+### 5.7 Target guard
+The k6 allowlist becomes only the declared targets (host and port), not every compose service. k6 cannot hit the database.
+
+### 5.8 Boot only what the target needs
+Start the target service plus its transitive `depends_on` closure, not the whole compose file. Services outside the closure (reverse proxy, frontend, monitoring, admin tools) are not started. A policy violation in one of them (for example a proxy bind-mounting the Docker socket) becomes a note, not a blocker. Violations inside the closure still block. This saves resources and avoids false blocks. It changes today's all-services boot, so add it behind a test and keep an opt-out (`compose.all_services: true`).
+
+### 5.9 Env sources and missing env files
+- Read ports and env from the original compose before the policy strips published ports.
+- Env source order: repo `.env` (if present), `.env.example`, compose defaults.
+- If a service references an `env_file` that does not exist (commonly a gitignored `.env`), create the runtime copy in `run_dir` from `.env.example`. Never create it in the repo. Otherwise `compose config` fails.
+- The agent can read `.env.example` (names and placeholder values). `.env` stays unreadable to the agent.
+- Values the user must supply (`needs_input`) come from the repo's own `.env` or from `LOADLINE_ENV_<NAME>` shell variables. Loadline never writes them into the repo.
+
+### 5.10 Reachability vs readiness
+- Reachable means any HTTP response. Ready means 2xx on the health path.
+- 401/403 on the health route: reachable but auth-protected. Try the other health candidates, else `limited`.
+- 404 on a candidate: try the next one.
+- Build time and image pulls do not count against `ready_timeout_s`. Use a separate build budget, since first builds can take minutes.
+
+---
+
+## 6. Auth
+
+| Auth kind | Typical repos | Config | Handling |
+|---|---|---|---|
+| None | demos, internal tools | `auth: {}` | Probe health only |
+| Static API key | simple services | `kind: api_key`, `header`, `value: {env: NAME}` | Key comes from repo env, or Loadline generates it into the app's env |
+| Login returning a token | FastAPI, Express, Spring | `kind: login`, `encoding: form` or `json`, `token.field` | k6 logs in once in `setup()`, reuses the token |
+| Session cookie login | Django, Rails, Laravel | `kind: cookie_login` (+ `csrf:` block) | Phase 5. Cookie jar per VU. If CSRF cannot be handled, `limited` |
+| HTTP Basic | internal APIs | `kind: basic` | Header from env refs |
+| External SSO / OAuth / OIDC | SaaS-style apps | `kind: token_env` (user supplies `LOADLINE_TOKEN_<profile>`) | Otherwise `limited`: "authenticated routes untested" |
+| App-signed JWT minting | custom | not in v1 | Later and optional; always labeled in the report |
+| Disable auth via dev flag | any | never done by setup | User may do it explicitly; report states "auth disabled" |
+| mTLS | enterprise | unsupported | `blocked` for authenticated routes |
+
+### Where credentials come from (priority)
+
+Today's sealed `default_user` is built from two fixed names (`FIRST_SUPERUSER`, `FIRST_SUPERUSER_PASSWORD`) read from the repo's `.env`. That is one repo family's convention, not a rule. Replace it with the profile's `{env: NAME}` references, and keep those two names only as a detection hint when no profile is declared.
+1. Repo's own env defaults (`.env`, `.env.example`, compose). Read by code, never copied into YAML.
+2. Generated by Loadline for app-owned secrets, applied to the app and to login from the same source.
+3. User-supplied via environment variables (`needs_input`).
+4. Created by a repo-provided seed command (`prepare`).
+5. Public signup endpoint: Phase 5.
+
+### Verification
+- Login probe returns a token (status and a redacted body snippet on failure).
+- `verify` request returns 2xx with the token.
+- Negative check: the same request without a token returns 401/403. If it returns 200, `verify` is not an auth-protected route; warn.
+
+### How k6 uses it
+- Compiled script performs the login in `setup()` from the profile, once per `run_k6` call (runs are at most 120 s, so token expiry is rarely an issue; warn if expiry is under 5 minutes).
+- Endpoints in `run_k6` say `auth: <profile name>`. Code attaches the token.
+- Login failure aborts the call with `{"error": "auth_failed", status, short_body}`. Never silently load unauthenticated.
+- To load the login endpoint itself, the agent sends `{id, use_login: <profile>}`; code builds the request. The agent never sees the password.
+
+### What the investigator sees
+Profile names, which endpoint verified them, and limitations such as "auth: default_user verified" or "auth: none obtained; only public routes loadable". Prompt rule: if auth failed, say so in the report; do not report fast 401s as healthy.
+
+---
+
+## 7. Repo coverage
+
+| Repo shape | v1 | How handled |
+|---|---|---|
+| Compose, one API + DB | supported | Core path |
+| Multiple compose files, overrides, profiles | supported | `docker compose config` + `compose.files` / `profiles` |
+| Frontend + backend + reverse proxy | supported | Target the app service, not frontend or proxy (§5.2) |
+| One-shot init or migration services | supported | Exit 0 is fine; non-zero is `container_exited` with log tail |
+| Compose healthcheck present | supported | Used as a signal, then confirmed from k6 image |
+| Dockerfile only, no dependencies | supported | Existing single-image path |
+| Dockerfile only, needs a DB | blocked | Message: "needs a compose file with its dependencies" |
+| Microservices behind a gateway | partial | v1 targets the gateway; multiple `targets` in Phase 5 |
+| App binds to 127.0.0.1 inside container | detected | Probe fails as `origin_unreachable`; hint "app binds loopback". Fix only if the repo documents a host env var; never override the start command. Else `blocked` |
+| App rejects Host header (Django `ALLOWED_HOSTS`, Rails host authorization) | detected | 400 classified `host_rejected`. Fix: set the documented env var, or `targets[].host_header` |
+| App redirects HTTP to HTTPS | detected | 301/308 to https classified `redirect_to_https`; fix via documented env flag else `limited` |
+| Trailing-slash redirects (307/308) | handled | k6 does not follow redirects silently; 3xx counted as a status class |
+| App refuses placeholder secrets outside local mode | handled | `generate: true`, or documented mode flag |
+| Needs third-party SaaS at boot | partial | `stub`; `limited` if it boots, `blocked` if it crashes |
+| Rate limiter (429s) | handled at report time | 429 appears in `status_counts`; prompt says to report it as a limiter, not capacity |
+| Empty database by default | flagged | Report states "data volume: repo seed only"; prepare/seed adds data |
+| Private registry images, GPU, host networking, privileged, host bind mounts | blocked | Sandbox policy; reason printed |
+| Compose includes a proxy or tool that violates policy (for example a Docker socket bind), and the app does not depend on it | supported | Closure boot skips it (§5.8) |
+| Image build needs secrets, SSH mounts or private registries | blocked | Reason printed; user must provide a buildable setup |
+| Health route needs auth or returns 404 | handled | §5.10: try other candidates, else `limited` |
+| `env_file` points at a missing, gitignored `.env` | handled | Runtime copy from `.env.example` in `run_dir` (§5.9) |
+| First build or image pull takes minutes | handled | Build budget is separate from the ready timeout |
+| Runtime is Podman, or compose lacks `config --format json` | partial | All new code goes through `docker_cmd`; falls back to YAML parsing with a warning |
+| Entire graph unavailable (download blocked) | degraded | Detection falls back to ripgrep and OpenAPI; route inventory marked degraded; entries with no handler or that look like repo paths are dropped |
+| Non-HTTP (gRPC, WebSocket, queue consumers) | out of scope | Blocked with message |
+| No container files at all | out of scope v1 | Blocked; later: agent-generated Dockerfile in `run_dir`, never in the repo |
+
+---
+
+## 8. Lifecycle
+
+- **New repo, simple:** `run` with no YAML. Detection finds one clear target; probe passes. Proceeds as `limited` with the note "auto-detected, no loadline.yaml".
+- **New repo, anything ambiguous:** `loadline setup`. Writes the config under `LOADLINE_HOME` and prints its path. Never edits app code, never commits, and never writes into the repo unless `--write-to-repo` is passed.
+- **Repeat analysis:** load YAML, validate, boot, probe, run. No setup agent.
+- **YAML exists and fingerprint differs:** warn, still try to boot (stale is not the same as wrong). If boot or probe fails, the error says "config may be stale: run `loadline setup --refresh`".
+- **`setup --refresh`:** writes `loadline.proposed.yaml` and prints a diff. Human edits are never overwritten.
+- **Incomplete config (`needs_input`):** `run` refuses and lists the missing variable names. Secrets come from the user's environment.
+- **Failed boot:** code classifies the failure (§11) and prints the log tail. In `run`: exit. In `setup`: returned to the agent for one revision.
+- **Cleanup:** every boot attempt (including setup attempts) uses unique run ids and the existing teardown, so nothing leaks.
+
+---
+
+## 9. Setup agent
+
+**Scope:** produce a YAML that boots and answers. It does not pick risky endpoints and does not diagnose performance.
+
+**Starts with** a precomputed detection report in its prompt: ranked services and reasons, port and health candidates, env var classes, login-like routes. This reduces thrash.
+
+**Tools (no shell):**
+
+| Tool | Purpose |
+|---|---|
+| `repo` | Graph search and routes (same as investigator) |
+| `read_file` | Bounded reads (same as investigator) |
+| `check_config(yaml)` | Schema and policy validation only |
+| `try_boot(yaml)` | Full boot + probes. Returns outcome, classified failure, redacted log tail |
+| `write_config(yaml)` | Writes `loadline.yaml` or `loadline.proposed.yaml` |
+
+**Existing reference:** the `loadline-run` skill already drives `analyze --boot --json` with a retry cap and minimal hint edits. The setup skill builds on that guidance instead of restarting it, and the budget below should not exceed its retry cap by much.
+
+**Budget (illustrative):** at most 5 `try_boot` calls, about 25 other tool calls, about 20 minutes. On exhaustion: write the best config with limitations and the unresolved fields, outcome `limited` or `blocked`.
+
+**Setup skill (SKILL.md) covers:**
+- Reading order: compose, Dockerfiles, `.env.example`, README run instructions, settings or config code, route inventory.
+- Per-pattern guidance: proxy in front, frontend + backend, init containers, loopback binding, Host rejection, HTTPS redirect, placeholder-secret rejection.
+- Auth discovery: find login-like routes, read the handler to decide `form` vs `json`, token field, and credential source.
+- Hard rules: cite `file:line` for every value; never fabricate third-party secrets; never change the start command or performance knobs; prefer the repo's own scripts; if unsure, leave `needs_input` or `unverified` and say why.
+
+---
+
+## 10. Outcomes
+
+| Outcome | Condition |
+|---|---|
+| `verified` | Booted, egress proof passed, k6-image probe got 2xx at the origin, prepare steps (required) passed, and auth (if declared) passed the verify and negative checks |
+| `limited` | Booted and reachable, but at least one gap: auth missing or failed, stubbed dependency, optional prepare failed, no health route, auto-detected without YAML |
+| `blocked` | Cannot boot, cannot reach from k6, required prepare failed, unsupported shape, or sandbox policy refused |
+
+The outcome and its limitations are printed at the end of `setup` / `check` and appear in the first lines of the report.
+
+---
+
+## 11. Failure modes and guards
+
+| Failure | Guard |
+|---|---|
+| Plausible but wrong config (e.g. picks the frontend) | Evidence required per field; ranked candidates; k6-image probe; warn if `health_path` not in route inventory; report states the target on line 1 |
+| Wrong hostname (the bug already hit) | One `Target`; `resolved_target.json`; grep test fails on hardcoded hosts in the k6 path; probe before agent starts |
+| k6 can hit the database | Guard allowlist limited to declared targets |
+| Invented credentials | Schema forbids values; only `generate` / `stub` / `needs_input` |
+| Auth silently skipped | Auth probe; `auth_failed` aborts the k6 call; limitation shown to agent and report |
+| Setup loops forever | Budget on `try_boot` and wall-clock |
+| Agent changes performance behavior | Knob denylist; behavior-affecting settings listed in report |
+| All requests counted as errors (status bug) | Per-operation status counters in the k6 script; tested against a stub returning 200, 404, 503 |
+| Empty result treated as success | `operations` empty or all counts zero returns an error |
+| k6 timeout kills the loop | Catch timeout, kill container by `loadline.run` label, return an error to the agent |
+| YAML stale after repo changes | Fingerprint warning; refresh writes a proposed file with a diff |
+| Command injection through `prepare` | Verbatim-in-repo rule; runs only inside sandbox containers; no host shell |
+
+Map these onto the existing `blocker` codes where one exists (`needs_input`, `egress_not_enforced`, and so on) and add new codes only for gaps. Keep the `analyze --boot --json` shape stable.
+
+Failure classes returned by boot and probes: `compose_invalid`, `build_failed`, `container_exited`, `unhealthy_timeout`, `port_not_listening`, `origin_unreachable`, `host_rejected`, `redirect_to_https`, `placeholder_secret_rejected`, `env_missing`, `prepare_failed`, `auth_failed`, `egress_not_enforced`, `unsupported_shape`.
+
+---
+
+## 12. Measurement fidelity
+
+Report header (Environment block), always:
+- Target origin and the evidence for it.
+- How the app was launched: command, worker count, debug or reload mode (as the repo defines them).
+- Sandbox limits (CPU, memory) for app services and for the k6 generator.
+- Auth state, data volume note, stubbed dependencies, proxy not measured.
+- Any behavior-affecting settings applied.
+
+Findings from a small sandbox are relative, not production capacity. The prompt says so.
+
+---
+
+## 13. Build order
+
+**Phase 0: trust the measurements (no agent, no YAML).**
+- `Target` + `resolved_target.json`; boot, k6 and auth read it.
+- k6-image smoke probe at boot.
+- Narrow `TargetGuard` to the app service.
+- Fix per-operation status counting; error on empty results; catch timeouts; cap rate, duration and VUs; return k6's first transport error when every request is status 0.
+- Integration test: stub server on a compose network, real k6 container.
+- *Done when:* the same run reports correct 2xx / 4xx / 5xx counts on a stub, and `unreliable-blind` and the full-stack template both pass the smoke probe.
+
+**Phase 1: schema, resolver, `check`, zero-config.**
+- `schema.py`, `detect.py`, `resolve.py`, `fingerprint.py`; read existing `.loadline.yaml` hints as the same schema.
+- `loadline check` and the zero-config `run` path.
+- *Done when:* both existing targets run unchanged and `check` prints the same outcome as before.
+
+**Phase 2: setup agent for `targets`, `compose`, `env`.**
+- `setup/agent.py`, `try_boot`, `write_config`, Setup skill.
+- *Done when:* setup produces a verified YAML for both existing targets with no Loadline code changes.
+
+**Phase 3: auth.**
+- `login`, `api_key`, `basic`, `token_env`; auth probe with negative check; login in k6 `setup()`; `use_login` operations.
+- *Done when:* the full-stack template is `verified` with authenticated `/items` loaded, and a missing credential produces `limited`, not silent 401s.
+
+**Phase 4: prepare and seed.**
+- `prepare.py` with the verbatim-in-repo rule; data-volume note in the report.
+
+**Phase 5: breadth.**
+- `cookie_login` with CSRF, multiple `targets`, signup-based bootstrap, optional auto-invoke of setup from `run`.
+
+---
+
+## 14. Test matrix
+
+**Acceptance repos:**
+1. `unreliable-blind`: service `app`, no auth, downstream stub. Works zero-config and with YAML.
+2. `full-stack-fastapi-template`: service `backend`, Postgres, form login, prestart. Setup yields `verified` with auth.
+3. A frontend + backend + proxy repo: target selection picks the app service.
+4. A Django or Express repo with cookie or API-key auth (Phase 3 or 5).
+5. A repo that must be `blocked` (host networking, or needs private image): clear reason, no hang.
+
+**Contract and negative tests:**
+- Literal secret in YAML rejected; unknown key rejected.
+- `prepare.run` not in repo rejected.
+- Wrong `service` fails the probe or route-inventory check, with a readable error.
+- Stale fingerprint warns and still boots; `--refresh` never overwrites.
+- Loopback bind classified `origin_unreachable`; Django-style 400 classified `host_rejected`.
+- Auth: wrong password gives `auth_failed`; `verify` returning 200 without a token produces a warning.
+- Status counts correct on a stub returning 200, 404, 503.
+- No leftover containers or networks labeled `loadline.run` after any failure.
+- Grep test: no literal `"app"` or `"backend"` host in k6 code.
+
+---
+
+## 15. Non-goals (for now)
+
+- Kubernetes, cloud-managed databases, non-HTTP protocols.
+- Generating Dockerfiles or compose files (possible later, inside `run_dir`, never in the repo).
+- Choosing which endpoints to test (that is the investigator's job).
+- Production-capacity claims.
+- Multi-agent orchestration or a config database.
+
+---
+
+## 16. Open decisions
+
+1. **File name:** keep `.loadline.yaml` in the repo as the user-owned file (existing convention). The setup-generated config lives under `LOADLINE_HOME`.
+2. **Precedence:** repo file, then generated config, then detection. Confirm this order.
+3. **Zero-config default outcome:** `limited` (proposed) so users know no verified config exists.
+4. **Budget numbers** for setup (5 boots, 25 calls, 20 minutes) are guesses; tune after the first real repos.
+
+store this in file . so this s basxcially ro ensure loadline can easily work with any repo as long as it is containerised right . now check with like hoh and other projects i have . and mainldy our source code . so curently our agent is working ffine for repos where envuronment is setup . w want to keep it the same way . just we want ot make sure envuronemnt and all stuff i s setup cleeanly every fucking time . so really be meticolosu chefck in fucking dpeth do not assume things . again come up with a clean simple design to solve the issues . no complex multiple braches without reason , hardcoding or overrfitting anfd just methodically do
+
+---
+
+Three things I'd still fix before handing it to Codex
+1. Migrations and seed data must work on every fresh Analyze run
+This is the biggest remaining gap.
+Your flow says Setup boots, prepares and verifies the application, then writes the configuration. Analyze runs separately. If Setup tears down its environment, its migrations and seeded users may not exist when Analyze starts a fresh environment.
+You already say Analyze must not decide which migrations to run. Keep that boundary—but have the deterministic runtime execute the validated, configured preparation steps on each fresh run, in the correct order. It must not depend on state left behind by Setup.
+Also, support preparation that must happen before the API starts, not just commands that can run after the process becomes reachable. Some applications cannot start correctly before their schema exists.
+2. Authentication has to work during the actual load test
+Setup verifying a login proves the profile works at setup time. It does not automatically authenticate later k6 requests.
+The runtime needs to resolve the profile's credentials securely and perform the appropriate login/token setup for each relevant k6 execution, or otherwise provide a valid, securely managed authentication mechanism. It must never silently benchmark protected routes without authentication.
+Your current plan correctly identifies that the old hard-coded FIRST_SUPERUSER convention needs to go. Make sure the replacement supports the actual end-to-end load-test path, not just Setup's auth probe.
+3. Don't break Compose paths when handling missing .env files
+Your plan copies missing environment files into the runtime area. That's sensible because it avoids modifying the user's repository.
+But be careful: moving or rewriting Compose files can change how relative build contexts, bind mounts and other paths resolve. Preserve the original project's path semantics and validate the fully resolved runtime Compose model before launching it.
+These are implementation gaps, not reasons to redesign the architecture.
+One more important distinction
+Your new start-set logic is sensible, but it should remain gated until both acceptance repositories pass. In particular, verify that the FastAPI template starts the API and its database, runs preparation, and includes Mailpit when actually required—without starting the unnecessary proxy or Playwright services.
+Your acceptance criteria already head in this direction. Pasted markdown.md
+
+---
+
+can u make this in depth plan cuz weak model will execute exact changes . lets not fuckup what works currenttly obv
+
+---
+
+bro i meant . run and load that means . like the one we have been doing till now naalyse might be a typo . like the one which runs entire thing rn that , and then our new thing load
+
+---
+
+bro i meant . run and load that means . like the one we have been doing till now naalyse might be a typo . like the one which runs entire thing rn that , and then our new thing load. lets only keep 2 whatever does entire thing fro setup to report rn , and then the new step of agentic sdetup which is load and not use anything else or causes confufison

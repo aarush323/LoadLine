@@ -1,0 +1,155 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M4K5A57V20TZ3YMEQ48Y37S3",
+  "session_id": "ec103095-0973-4027-ada4-ed65f9150044",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-10T15:01:17.959519556Z",
+  "branch": "main",
+  "checkpoints_count": 5,
+  "save_step_count": 5,
+  "files_touched": [
+    "agents/investigator_prompt.md",
+    "loadline/adapters/generator/k6_compiler.py",
+    "loadline/adapters/generator/k6_operation_metrics.py",
+    "loadline/cli.py",
+    "loadline/investigator/k6_tool.py",
+    "loadline/investigator/repo_routes.py",
+    "loadline/investigator/report_compose.py",
+    "loadline/investigator/run.py",
+    "loadline/investigator/tools.py",
+    "loadline/run_pipeline.py",
+    "loadline/ui/render.py",
+    "loadline/ui/run_console.py",
+    "loadline/ui/run_index.py",
+    "tests/unit/test_dashboard.py",
+    "tests/unit/test_investigation_report_compose.py",
+    "tests/unit/test_investigator_prompt.py",
+    "tests/unit/test_investigator_run.py",
+    "tests/unit/test_investigator_tools.py",
+    "tests/unit/test_k6_operation_metrics.py",
+    "tests/unit/test_repo_routes.py"
+  ],
+  "agent": "Cursor",
+  "model": "grok-4.7-high",
+  "turn_id": "03e4587fb3f4",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 77757,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 3094272,
+    "output_tokens": 39734,
+    "api_call_count": 4
+  },
+  "session_metrics": {
+    "turn_count": 5
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-10T15:01:17.907279908Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 1257,
+    "human_modified": 600,
+    "human_removed": 0,
+    "total_committed": 1601,
+    "total_lines_changed": 1857,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 1288,
+      "user_lines_removed": 586,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "agents/investigator_prompt.md": 8,
+        "docs/loadline_design_system_v3.md": 1079,
+        "loadline/adapters/generator/k6_compiler.py": 39,
+        "loadline/adapters/generator/k6_operation_metrics.py": 31,
+        "loadline/investigator/k6_tool.py": 2,
+        "loadline/investigator/repo_routes.py": 26,
+        "loadline/investigator/run.py": 5,
+        "loadline/investigator/tools.py": 13,
+        "tests/unit/test_investigator_prompt.py": 2,
+        "tests/unit/test_investigator_run.py": 2,
+        "tests/unit/test_investigator_tools.py": 7,
+        "tests/unit/test_k6_operation_metrics.py": 40,
+        "tests/unit/test_repo_routes.py": 34
+      },
+      "user_removed_per_file": {
+        "agents/investigator_prompt.md": 20,
+        "loadline/adapters/generator/k6_operation_metrics.py": 11,
+        "loadline/investigator/k6_tool.py": 1,
+        "loadline/investigator/repo_routes.py": 2,
+        "loadline/investigator/report_compose.py": 356,
+        "loadline/investigator/run.py": 13,
+        "loadline/investigator/tools.py": 1,
+        "tests/unit/test_investigation_report_compose.py": 172,
+        "tests/unit/test_investigator_prompt.py": 3,
+        "tests/unit/test_investigator_run.py": 6,
+        "tests/unit/test_k6_operation_metrics.py": 1
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 435,
+      "user_lines_removed": 10,
+      "agent_lines_added": 1288,
+      "agent_lines_removed": 586,
+      "user_added_per_file": {
+        "loadline/cli.py": 12,
+        "loadline/run_pipeline.py": 6,
+        "loadline/ui/banner.py": 42,
+        "loadline/ui/dashboard_tty.py": 281,
+        "loadline/ui/render.py": 21,
+        "loadline/ui/run_console.py": 33,
+        "loadline/ui/spark.py": 40
+      },
+      "user_removed_per_file": {
+        "loadline/cli.py": 2,
+        "loadline/ui/render.py": 2,
+        "loadline/ui/run_console.py": 6
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 508,
+      "user_lines_removed": 0,
+      "agent_lines_added": 1360,
+      "agent_lines_removed": 596,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 145,
+        "loadline/ui/banner.py": 42,
+        "loadline/ui/dashboard_tty.py": 281,
+        "loadline/ui/spark.py": 40
+      }
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 679,
+      "user_lines_removed": 0,
+      "agent_lines_added": 1360,
+      "agent_lines_removed": 596,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316,
+        "loadline/ui/banner.py": 42,
+        "loadline/ui/dashboard_tty.py": 281,
+        "loadline/ui/spark.py": 40
+      }
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 679,
+      "user_lines_removed": 0,
+      "agent_lines_added": 1360,
+      "agent_lines_removed": 596,
+      "user_added_per_file": {
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316,
+        "loadline/ui/banner.py": 42,
+        "loadline/ui/dashboard_tty.py": 281,
+        "loadline/ui/spark.py": 40
+      }
+    }
+  ]
+}
