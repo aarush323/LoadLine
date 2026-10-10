@@ -1,0 +1,54 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M4K0TSKCY5ES1Z65SG2PGG7J",
+  "session_id": "4c06f0b6-2a8c-4293-88a4-68dd862bead8",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-10T13:42:55.606701556Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    "loadline/adapters/runtime/compose_boot.py",
+    "loadline/investigator/tools.py",
+    "loadline/ui/agent_trace.py",
+    "tests/unit/test_agent_trace.py",
+    "tests/unit/test_compose_boot_generalization.py",
+    "tests/unit/test_readiness.py"
+  ],
+  "agent": "Cursor",
+  "model": "composer-2.5",
+  "turn_id": "f9d79c6b7d1e",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 87688,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 3322071,
+    "output_tokens": 9860,
+    "api_call_count": 1
+  },
+  "session_metrics": {
+    "duration_ms": 8771329,
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-10T13:42:55.451496488Z",
+    "agent_lines": 173,
+    "agent_removed": 27,
+    "human_added": 675,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 848,
+    "total_lines_changed": 895,
+    "agent_percentage": 22.3463687150838,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
