@@ -39,6 +39,19 @@ def test_format_repo_routes_result():
     assert "1 routes" in line
 
 
+def test_format_read_file_from_part_content_only():
+    event = FunctionToolResultEvent(
+        part=ToolReturnPart(
+            tool_name="read_file",
+            content={"path": "app/main.py", "start_line": 1, "end_line": 40, "snippet": "1:x\n2:y"},
+            tool_call_id="1",
+        ),
+        content=None,
+    )
+    line = format_tool_result(event)
+    assert line == "← read_file 40 lines"
+
+
 def test_format_run_k6_result_summary():
     line = format_tool_result(
         _result_event(

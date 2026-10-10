@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 _TAG_RE = re.compile(r"^[^{]+\{(.+)\}$")
+_HTTP_STATUS_RE = re.compile(r"^\d{3}$")
 
 
 def parse_metric_tags(metric_name: str) -> dict[str, str] | None:
@@ -27,6 +28,10 @@ def _metric_values(metrics: dict[str, Any], name: str) -> dict[str, Any]:
     return values if isinstance(values, dict) else {}
 
 
+def _valid_http_status(status: str) -> bool:
+    return bool(_HTTP_STATUS_RE.match(str(status)))
+
+
 def aggregate_operations_from_metrics(metrics: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Build per-operation counts, status breakdown, error rate, and latency percentiles."""
     ops: dict[str, dict[str, Any]] = {}
@@ -43,6 +48,8 @@ def aggregate_operations_from_metrics(metrics: dict[str, Any]) -> dict[str, dict
             {
                 "status_counts": {},
                 "count": 0,
+                "untagged_req_count": 0,
+                "has_status_tagged_reqs": False,
                 "error_count": 0,
                 "http_req_failed_rate": None,
                 "p50_ms": None,
@@ -55,12 +62,15 @@ def aggregate_operations_from_metrics(metrics: dict[str, Any]) -> dict[str, dict
             continue
 
         if name.startswith("http_reqs"):
-            status = tags.get("status", "0")
             c = int(values.get("count") or 0)
-            row["count"] += c
-            row["status_counts"][status] = row["status_counts"].get(status, 0) + c
-            if status and not status.startswith("2"):
-                row["error_count"] += c
+            status = tags.get("status")
+            if status is not None and _valid_http_status(status):
+                row["has_status_tagged_reqs"] = True
+                row["status_counts"][status] = row["status_counts"].get(status, 0) + c
+                if not str(status).startswith("2"):
+                    row["error_count"] += c
+            elif status is None:
+                row["untagged_req_count"] += c
         elif name.startswith("http_req_failed"):
             rate = values.get("rate")
             if rate is not None:
@@ -77,10 +87,20 @@ def aggregate_operations_from_metrics(metrics: dict[str, Any]) -> dict[str, dict
                 row["duration_samples"] = max(row["duration_samples"], cnt)
 
     for row in ops.values():
+        if row["has_status_tagged_reqs"]:
+            row["count"] = sum(int(v) for v in row["status_counts"].values())
+        else:
+            row["count"] = int(row["untagged_req_count"] or 0)
+            row["status_counts"] = {}
+            row["error_count"] = 0
         total = int(row["count"] or 0)
+        row["http_status_known"] = bool(row["has_status_tagged_reqs"] and row["status_counts"])
+        row["status_counts_reliable"] = row["http_status_known"]
         if row["http_req_failed_rate"] is not None:
             row["error_rate"] = float(row["http_req_failed_rate"])
-        elif total:
+            if row["error_count"] == 0 and total:
+                row["error_count"] = int(round(row["error_rate"] * total))
+        elif total and row["http_status_known"]:
             row["error_rate"] = float(row["error_count"]) / total
         else:
             row["error_rate"] = 0.0
@@ -108,6 +128,8 @@ def merge_operation_stats(
             "p50_ms": row.get("p50_ms"),
             "p95_ms": row.get("p95_ms"),
             "status_counts": dict(row.get("status_counts") or {}),
+            "http_status_known": bool(row.get("http_status_known")),
+            "status_counts_reliable": bool(row.get("status_counts_reliable")),
             "achieved_rps": count / duration_s if duration_s else 0.0,
         }
     if from_payload:

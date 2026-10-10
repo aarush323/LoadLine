@@ -12,7 +12,7 @@ def test_investigator_completes_with_test_model(tmp_path: Path):
     repo = Path(__file__).resolve().parents[2]
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    report_text = "## Report\n\nTest endpoint held at 10 rps.\n"
+    report_text = "## Verdict\n\nTest endpoint held at 10 rps.\n\n## What happened under load\n\nstub\n"
     with patch("loadline.investigator.run.wrap_agent", side_effect=lambda a, **_: a):
         result = run_investigation_sync(
             repo_root=repo,
@@ -27,7 +27,13 @@ def test_investigator_completes_with_test_model(tmp_path: Path):
             network="n",
         )
     assert result.status == "completed"
-    assert (run_dir / "report.md").read_text() == report_text
+    final = (run_dir / "report.md").read_text()
+    assert "Test endpoint held at 10 rps." in final
+    assert "No k6 experiments were recorded" in final
+    assert "## Appendix" in final
+    report_json = json.loads((run_dir / "report.json").read_text())
+    assert report_json.get("source") == "investigator_agent"
+    assert "experiments" in report_json
     assert not any(e.get("kind") == "finding" for e in Ledger.open(run_dir, "live-mock").events())
 
 

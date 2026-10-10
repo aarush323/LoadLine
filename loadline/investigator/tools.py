@@ -148,6 +148,8 @@ def read_file(
         return {"error": "path denied by policy"}
     if not target.is_file():
         return {"error": "file not found"}
+    if end_line < start_line:
+        return {"error": "end_line must be >= start_line"}
     lines = target.read_text(encoding="utf-8", errors="ignore").splitlines()
     start = max(1, start_line)
     end = min(len(lines), end_line)

@@ -11,6 +11,10 @@ def test_prompt_lists_three_tools():
     assert "run_k6(endpoints" in text
     assert "read_file(path" in text
     assert "run_k6(endpoints" in text
+    assert "## Verdict" in text
+    assert "## What happened under load" in text
+    assert "## Causal chain" in text
+    assert "status_counts_reliable" in text
     assert "{{BOARD}}" not in text
     loaded = load_investigator_prompt(root)
     assert loaded == text

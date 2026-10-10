@@ -43,3 +43,19 @@ def test_aggregate_counts_non_2xx_as_errors():
     ops = aggregate_operations_from_metrics(metrics)
     assert ops["login"]["error_count"] == 40
     assert ops["login"]["status_counts"]["401"] == 40
+
+
+def test_operation_only_http_reqs_does_not_invent_status_zero_errors():
+    metrics = {
+        "http_reqs{operation:healthz}": {"values": {"count": 50}},
+        "http_req_duration{operation:healthz}": {"values": {"med": 2, "p(95)": 4, "count": 50}},
+        "http_req_failed{operation:healthz}": {"values": {"rate": 0}},
+    }
+    ops = aggregate_operations_from_metrics(metrics)
+    row = ops["healthz"]
+    assert row["count"] == 50
+    assert row["status_counts"] == {}
+    assert row["error_count"] == 0
+    assert row["error_rate"] == 0.0
+    assert row["http_status_known"] is False
+    assert row["status_counts_reliable"] is False

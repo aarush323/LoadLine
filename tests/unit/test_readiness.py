@@ -207,17 +207,18 @@ def test_slow_db_boot_waits_with_that_budget(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("LOADLINE_HOME", str(tmp_path / "loadline"))
     seen: dict[str, object] = {}
 
-    def capture_wait(network, url, budget_s, poll_s=2.0, progress=None, **kwargs):
+    def capture_wait(network, urls, budget_s, poll_s=2.0, progress=None, **kwargs):
         seen["budget"] = budget_s
-        seen["url"] = url
+        seen["url"] = urls[0] if urls else ""
         seen["network"] = network
-        return HealthWaitResult(
+        waited = HealthWaitResult(
             ready=True,
             elapsed_s=0.0,
             budget_s=budget_s,
             polls=1,
             last_probe=ProbeResult(ok=True, exit_code=0, http_code=200),
         )
+        return waited, seen["url"]
 
     def fake_compose(*_args, **_kwargs):
         proc = MagicMock()
@@ -333,9 +334,9 @@ def test_wait_http_stops_when_app_container_exited(monkeypatch) -> None:
         "loadline.adapters.runtime.compose_boot._probe_http_result",
         lambda *_a, **_k: ProbeResult(ok=False, exit_code=28, http_code=0),
     )
-    result = _wait_http(
+    result, _url = _wait_http(
         "net",
-        "http://backend:8000/health",
+        ["http://backend:8000/health"],
         145,
         project="p",
         compose_file=Path("/tmp/c.yaml"),

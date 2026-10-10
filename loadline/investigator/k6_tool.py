@@ -144,6 +144,12 @@ def _aggregate_metrics_note(metrics: dict[str, Any]) -> dict[str, Any] | None:
     return note
 
 
+def _status_counts_imply_http(status_counts: dict[str, int]) -> bool:
+    if not status_counts:
+        return False
+    return all(re.fullmatch(r"\d{3}", str(k)) for k in status_counts)
+
+
 def format_run_k6_result(
     summary_raw: dict[str, Any],
     *,
@@ -168,6 +174,14 @@ def format_run_k6_result(
         w = weights[idx] if idx < len(weights) else 1
         offered_op = offered_rps * (w / total_w)
         achieved = float(row.get("achieved_rps") or (count / duration_s if duration_s else 0))
+        status_counts = {str(k): int(v) for k, v in (row.get("status_counts") or {}).items()}
+        http_status_known = bool(row.get("http_status_known")) or _status_counts_imply_http(status_counts)
+        status_counts_reliable = bool(row.get("status_counts_reliable")) or http_status_known
+        notes: list[str] = []
+        if not status_counts_reliable:
+            notes.append(
+                "HTTP status codes were not tagged in k6 summary; do not treat status_counts as application errors."
+            )
         operations_out[str(op_id)] = {
             "count": count,
             "error_count": int(row.get("error_count") or 0),
@@ -176,7 +190,10 @@ def format_run_k6_result(
             "p95_ms": row.get("p95_ms"),
             "offered_rps": round(offered_op, 4),
             "achieved_rps": achieved,
-            "status_counts": {str(k): int(v) for k, v in (row.get("status_counts") or {}).items()},
+            "status_counts": status_counts,
+            "http_status_known": http_status_known,
+            "status_counts_reliable": status_counts_reliable,
+            "measurement_notes": notes,
         }
     out: dict[str, Any] = {
         "offered_rps": float(offered_rps),

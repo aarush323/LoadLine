@@ -63,6 +63,37 @@ def test_format_run_k6_result_has_per_operation_latency_and_no_verdict():
     assert "verdict" not in out
     assert out["operations"]["login"]["p95_ms"] == 40
     assert out["operations"]["login"]["status_counts"] == {"200": 30}
+    assert out["operations"]["login"]["status_counts_reliable"] is True
+
+
+def test_format_run_k6_result_flags_unreliable_status_counts():
+    raw = {
+        "vu_ceiling": 50,
+        "vus_max": 4,
+        "vus_max_reached": False,
+        "dropped_iterations": 0,
+        "operations": {
+            "healthz": {
+                "count": 20,
+                "error_count": 0,
+                "error_rate": 0.0,
+                "p95_ms": 5,
+                "status_counts": {},
+                "http_status_known": False,
+                "status_counts_reliable": False,
+            }
+        },
+    }
+    out = format_run_k6_result(
+        raw,
+        offered_rps=2,
+        duration_s=10,
+        endpoint_ids=["healthz"],
+        weights=[1],
+    )
+    op = out["operations"]["healthz"]
+    assert op["status_counts_reliable"] is False
+    assert any("status_counts" in n for n in op.get("measurement_notes", []))
 
 
 def test_format_run_k6_result_aggregate_when_tags_missing():

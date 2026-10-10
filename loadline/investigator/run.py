@@ -23,6 +23,7 @@ from loadline.core.env_policy import load_repo_dotenv
 from loadline.investigator.agent_factory import build_investigator_agent, default_usage_limits, wrap_agent
 from loadline.investigator.deps import InvestigationDeps
 from loadline.investigator.prompt import load_investigator_prompt
+from loadline.investigator.report_compose import compose_investigation_report
 from loadline.ui.agent_trace import format_stream_event
 from pydantic_ai.run import AgentRunResultEvent
 
@@ -49,15 +50,16 @@ def write_agent_report(
     markdown: str,
     *,
     run_state: str = "completed",
+    report_meta: dict[str, Any] | None = None,
 ) -> Path:
     """Persist the agent's markdown as report.md (not template-rendered)."""
     md_path = run_dir / "report.md"
     md_path.write_text(markdown)
     json_path = run_dir / "report.json"
-    json_path.write_text(
-        json.dumps({"run_state": run_state, "source": "investigator_agent"}, indent=2),
-        encoding="utf-8",
-    )
+    payload: dict[str, Any] = {"run_state": run_state, "source": "investigator_agent"}
+    if report_meta:
+        payload.update(report_meta)
+    json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     ledger = Ledger.open(run_dir, run_id)
     ledger.append(
         "report_written",
@@ -203,7 +205,13 @@ async def run_investigation(
         else:
             result = await _run_agent_with_trace(agent, deps, limits, console)
         text = str(result.output)
-        write_agent_report(run_dir, run_id, text)
+        text, report_meta = compose_investigation_report(
+            text,
+            run_dir=run_dir,
+            run_id=run_id,
+            read_ranges=deps.read_ranges,
+        )
+        write_agent_report(run_dir, run_id, text, report_meta=report_meta)
         return InvestigationResult(run_id, run_dir, "completed", agent_output=text)
     except Exception as exc:
         reason = f"{type(exc).__name__}: {exc}"

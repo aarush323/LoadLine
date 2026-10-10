@@ -2,8 +2,10 @@
 
 from loadline.adapters.observability.postgres import postgres_target_from_spec
 from loadline.adapters.runtime.compose_boot import (
+    _health_path_candidates,
     _health_url,
     _infer_app_service,
+    _listen_port_from_service,
     _parse_healthcheck_http,
 )
 from loadline.neatlogs_setup import LOADLINE_WORKFLOW
@@ -55,3 +57,36 @@ def test_postgres_target_missing_credentials_not_measured():
 
 def test_loadline_workflow_import():
     assert LOADLINE_WORKFLOW == CAPACITY_INVESTIGATION
+
+
+def test_infer_app_service_prefers_db_backed_app_over_downstream():
+    compose = {
+        "services": {
+            "db": {"image": "postgres:16-alpine"},
+            "downstream": {
+                "build": ".",
+                "command": "uvicorn downstream.main:app --host 0.0.0.0 --port 9000",
+            },
+            "app": {
+                "build": ".",
+                "depends_on": {"db": {"condition": "service_healthy"}},
+            },
+        }
+    }
+    assert _infer_app_service(compose, None) == "app"
+
+
+def test_listen_port_from_uvicorn_command():
+    svc = {"command": "uvicorn downstream.main:app --host 0.0.0.0 --port 9000"}
+    assert _listen_port_from_service(svc) == 9000
+
+
+def test_health_path_candidates_include_healthz():
+    assert _health_path_candidates("/health")[:3] == ["/health", "/healthz", "/readyz"]
+
+
+def test_health_url_uses_command_port_when_no_healthcheck():
+    svc = {"command": "uvicorn app.main:app --host 0.0.0.0 --port 8000"}
+    port, path = _health_url("app", None, svc)
+    assert port == 8000
+    assert path == "/health"

@@ -100,20 +100,45 @@ def _summarize_run_k6_result(data: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
-def format_tool_result(event: FunctionToolResultEvent, *, verbose: bool = False) -> str:
-    part = event.part
-    tool_name = getattr(part, "tool_name", None) or "tool"
+def _tool_result_data(event: FunctionToolResultEvent) -> dict[str, Any]:
     content = event.content
-    data: dict[str, Any] = {}
     if isinstance(content, str):
         try:
             parsed = json.loads(content)
             if isinstance(parsed, dict):
-                data = parsed
+                return _redact_mapping(parsed)
         except json.JSONDecodeError:
             pass
     elif isinstance(content, dict):
-        data = content
+        return _redact_mapping(content)
+    part_content = getattr(event.part, "content", None)
+    if isinstance(part_content, dict):
+        return _redact_mapping(part_content)
+    if isinstance(part_content, str):
+        try:
+            parsed = json.loads(part_content)
+            if isinstance(parsed, dict):
+                return _redact_mapping(parsed)
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
+def _read_file_line_count(data: dict[str, Any]) -> int:
+    start = data.get("start_line")
+    end = data.get("end_line")
+    if isinstance(start, int) and isinstance(end, int) and end >= start:
+        return end - start + 1
+    snippet = data.get("snippet") or ""
+    if snippet:
+        return snippet.count("\n") + 1
+    return 0
+
+
+def format_tool_result(event: FunctionToolResultEvent, *, verbose: bool = False) -> str:
+    part = event.part
+    tool_name = getattr(part, "tool_name", None) or "tool"
+    data = _tool_result_data(event)
     if tool_name == "repo":
         if data.get("error"):
             return f"← repo error {str(data['error'])[:80]}"
@@ -127,8 +152,7 @@ def format_tool_result(event: FunctionToolResultEvent, *, verbose: bool = False)
     if tool_name == "read_file":
         if data.get("error"):
             return f"← read_file error {str(data['error'])[:60]}"
-        snippet = data.get("snippet") or ""
-        lines = snippet.count("\n") + 1 if snippet else 0
+        lines = _read_file_line_count(data)
         return f"← read_file {lines} lines"
     if tool_name == "run_k6":
         return f"← run_k6 {_summarize_run_k6_result(data)}"

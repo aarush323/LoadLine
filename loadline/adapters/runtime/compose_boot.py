@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 import yaml
 
@@ -92,6 +93,7 @@ def _anchor_build_contexts(compose: dict[str, Any], repo: Path) -> None:
 
 
 _HTTP_IN_HEALTHCHECK = re.compile(r"https?://[^:/\s]+:(\d+)(/[^\s'\"\]]*)?", re.I)
+_UVICORN_PORT = re.compile(r"--port(?:=|\s+)(\d+)", re.I)
 
 _DB_IMAGE_MARKERS = ("postgres", "mysql", "mariadb", "mongo", "redis", "memcached", "clickhouse")
 
@@ -125,6 +127,46 @@ def _parse_healthcheck_http(svc: dict[str, Any]) -> tuple[int, str] | None:
     return port, path
 
 
+def _command_text(svc: dict[str, Any]) -> str:
+    cmd = svc.get("command")
+    if cmd is None:
+        return ""
+    if isinstance(cmd, list):
+        return " ".join(str(x) for x in cmd)
+    return str(cmd)
+
+
+def _listen_port_from_service(svc: dict[str, Any]) -> int | None:
+    match = _UVICORN_PORT.search(_command_text(svc))
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _score_app_service_candidate(name: str, svc: dict[str, Any], services: dict[str, Any]) -> int:
+    image = str(svc.get("image") or "")
+    if _is_dependency_db_image(image):
+        return -1
+    if not (svc.get("build") or _service_has_http_port(svc)):
+        return -1
+    score = 0
+    for dep in depends_on_service_names(svc):
+        dep_svc = services.get(dep)
+        if isinstance(dep_svc, dict) and _is_dependency_db_image(str(dep_svc.get("image") or "")):
+            score += 40
+    cmd = _command_text(svc).lower()
+    lname = name.lower()
+    if "downstream" in lname or "downstream." in cmd:
+        score -= 50
+    if "app.main" in cmd or (":app" in cmd and "downstream" not in cmd):
+        score += 25
+    if lname in ("app", "api", "backend", "web", "server"):
+        score += 15
+    if lname in ("downstream", "worker", "sidecar", "stub"):
+        score -= 20
+    return score
+
+
 def _infer_app_service(compose: dict[str, Any], hints: LoadlineHints | None) -> str | None:
     if hints and hints.app_service:
         return hints.app_service
@@ -134,15 +176,25 @@ def _infer_app_service(compose: dict[str, Any], hints: LoadlineHints | None) -> 
     for name, svc in services.items():
         if isinstance(svc, dict) and _parse_healthcheck_http(svc):
             return name
+    ranked: list[tuple[int, str]] = []
     for name, svc in services.items():
         if not isinstance(svc, dict):
             continue
-        image = str(svc.get("image") or "")
-        if _is_dependency_db_image(image):
-            continue
-        if svc.get("build") or _service_has_http_port(svc):
-            return name
-    return None
+        score = _score_app_service_candidate(name, svc, services)
+        if score >= 0:
+            ranked.append((score, name))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return ranked[0][1]
+
+
+def _health_path_candidates(primary: str) -> list[str]:
+    paths: list[str] = []
+    for candidate in (primary, "/healthz", "/readyz", "/health"):
+        if candidate and candidate not in paths:
+            paths.append(candidate)
+    return paths
 
 
 def _resolve_compose_path(repo: Path, profile: dict[str, Any], hints: LoadlineHints | None) -> Path | None:
@@ -166,6 +218,9 @@ def _health_url(
         port = hints.container_port
     elif parsed:
         port = parsed[0]
+    elif service_spec:
+        port_from_cmd = _listen_port_from_service(service_spec)
+        port = port_from_cmd if port_from_cmd is not None else 8000
     else:
         port = 8000
     if hints and hints.health_path:
@@ -248,7 +303,7 @@ def _compose_app_ps_state(
 
 def _wait_http(
     network: str,
-    url: str,
+    urls: list[str],
     budget_s: float,
     poll_s: float = 2.0,
     progress: BootProgress | None = None,
@@ -257,9 +312,10 @@ def _wait_http(
     compose_file: Path | None = None,
     repo: Path | None = None,
     app_service: str | None = None,
-) -> HealthWaitResult:
+) -> tuple[HealthWaitResult, str]:
+    primary = urls[0] if urls else ""
     if progress is not None:
-        progress.boot_note(f"boot: waiting for {url} (budget {int(budget_s)}s)")
+        progress.boot_note(f"boot: waiting for {primary} (budget {int(budget_s)}s)")
 
     def _on_poll(elapsed_s: float, total_s: float) -> None:
         if progress is not None:
@@ -279,13 +335,26 @@ def _wait_http(
             return True
         return False
 
-    return wait_until_http_ready(
-        lambda: _probe_http_result(network, url),
+    successful_url = primary
+
+    def _probe() -> ProbeResult:
+        nonlocal successful_url
+        last: ProbeResult | None = None
+        for url in urls:
+            last = _probe_http_result(network, url)
+            if last.ok:
+                successful_url = url
+                return last
+        return last if last is not None else ProbeResult(ok=False, exit_code=7, http_code=0, detail="no probe")
+
+    waited = wait_until_http_ready(
+        _probe,
         budget_s,
         poll_s=poll_s,
         on_poll=_on_poll,
         abort_check=_abort_app_dead if app_service else None,
     )
+    return waited, successful_url if waited.ready else primary
 
 
 def _compose_cmd_with_ticks(
@@ -665,7 +734,8 @@ def boot_repository(
     app_spec = (raw.get("services") or {}).get(app_service) if isinstance(raw.get("services"), dict) else None
     app_spec = app_spec if isinstance(app_spec, dict) else {}
     port, health_path = _health_url(app_service, hints, app_spec)
-    health_url = f"http://{app_service}:{port}{health_path}"
+    health_urls = [f"http://{app_service}:{port}{path}" for path in _health_path_candidates(health_path)]
+    health_url = health_urls[0]
     readiness_budget_s = _readiness_budget_s(plan, app_service)
     sig = f"compose_up:{compose_path.name}"
 
@@ -734,9 +804,9 @@ def boot_repository(
                             egress_failed = True
                             break
                     if not egress_failed:
-                        waited = _wait_http(
+                        waited, health_url = _wait_http(
                             run_network,
-                            health_url,
+                            health_urls,
                             readiness_budget_s,
                             progress=progress,
                             project=project,
@@ -744,6 +814,7 @@ def boot_repository(
                             repo=repo,
                             app_service=app_service,
                         )
+                        health_path = urlparse(health_url).path or health_path
                         if not waited.ready:
                             health_evidence = _collect_boot_evidence(
                                 project,
