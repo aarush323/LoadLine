@@ -33,7 +33,7 @@ from loadline.core.readiness import (
 from loadline.core.env_policy import load_repo_dotenv
 from loadline.core.sandbox_policy import apply_sandbox_policy
 from loadline.adapters.runtime.compose_merge import load_project_compose
-from loadline.discovery.intake import discover_capabilities, discover_profile
+from loadline.discovery.intake import discover_capabilities, discover_profile, ensure_launch_files
 from loadline.adapters.runtime.docker_runner import (
     create_internal_network,
     docker_cmd,
@@ -734,7 +734,12 @@ def boot_repository(
         from loadline.core.hints import load_hints as _load_hints
 
         hints, _ = _load_hints(repo / ".loadline.yaml")
-    profile = discover_profile(repo)
+    profile = ensure_launch_files(
+        repo,
+        discover_profile(repo),
+        compose_file=hints.compose_file if hints else None,
+        dockerfile=hints.dockerfile if hints else None,
+    )
     capabilities = discover_capabilities(profile)
 
     if capabilities.get("blockers"):

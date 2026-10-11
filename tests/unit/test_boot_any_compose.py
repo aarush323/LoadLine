@@ -232,3 +232,9 @@ def test_windows_path_maps_when_mount_exists():
 
 def test_existing_path_is_not_remapped(tmp_path: Path):
     assert normalize_user_repo_path(tmp_path) == tmp_path.resolve()
+
+
+def test_path_strips_embedded_newlines():
+    got = normalize_user_repo_path("/tmp/api-\nperformance")
+    assert "\n" not in str(got)
+    assert got.name == "api-performance"

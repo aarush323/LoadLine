@@ -12,7 +12,8 @@ import yaml
 from loadline.adapters.runtime.compose_boot import BootOutcome, boot_repository
 from loadline.core.auth import require_model_auth
 from loadline.core.hints import load_hints
-from loadline.setup_agent import hints_from_boot, run_setup_agent
+from loadline.discovery.intake import _find_compose, _find_dockerfiles
+from loadline.setup_agent import hints_from_boot, run_setup_agent, write_hints_file
 from loadline.ui.run_console import RunConsole
 
 
@@ -42,6 +43,33 @@ def _maybe_write_hints(repo: Path, outcome: BootOutcome) -> Path | None:
 
 def _print_blocker(outcome: BootOutcome) -> None:
     print(json.dumps({"status": outcome.status, "blocker": outcome.blocker}, indent=2), file=sys.stderr)
+
+
+def _setup_agent_can_help(repo: Path, outcome: BootOutcome) -> bool:
+    """An empty checkout cannot be rescued by writing .loadline.yaml."""
+    blocker = outcome.blocker or {}
+    if blocker.get("code") != "no_entrypoint":
+        return True
+    return bool(_find_compose(repo) or _find_dockerfiles(repo))
+
+
+def _recover_known_entrypoint(repo: Path, outcome: BootOutcome) -> BootOutcome:
+    blocker = outcome.blocker or {}
+    if blocker.get("code") != "no_entrypoint":
+        return outcome
+    compose = _find_compose(repo)
+    dockerfiles = _find_dockerfiles(repo)
+    if not compose and not dockerfiles:
+        return outcome
+    payload: dict[str, Any] = {"schema_version": "1"}
+    if compose:
+        payload["compose_file"] = compose[0]
+    if dockerfiles:
+        payload["dockerfile"] = dockerfiles[0]
+    ok, _err = write_hints_file(repo, payload)
+    if not ok:
+        return outcome
+    return boot_repository(repo, teardown=True, require_auth=False)
 
 
 def load_repository(
@@ -86,6 +114,14 @@ def load_repository(
 
     blocker = outcome.blocker or {}
     if outcome.status != "booted" and blocker.get("retryable") and not blocker.get("security"):
+        outcome = _recover_known_entrypoint(repo, outcome)
+        blocker = outcome.blocker or {}
+    if (
+        outcome.status != "booted"
+        and blocker.get("retryable")
+        and not blocker.get("security")
+        and _setup_agent_can_help(repo, outcome)
+    ):
         runner = setup_runner if setup_runner is not None else run_setup_agent
         outcome = runner(repo, outcome)
 

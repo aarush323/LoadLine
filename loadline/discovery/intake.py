@@ -74,11 +74,18 @@ _COMPOSE_MAX_DEPTH = 6
 _COMPOSE_MAX_FILES = 20
 
 
+def _is_present_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
 def _find_compose(root: Path) -> list[str]:
     found: list[str] = []
     seen: set[str] = set()
     for name in COMPOSE_NAMES:
-        if (root / name).is_file():
+        if _is_present_file(root / name):
             found.append(name)
             seen.add(name)
     for path in _iter_repo_files(root, limit=400):
@@ -99,10 +106,51 @@ def _find_compose(root: Path) -> list[str]:
 
 def _find_dockerfiles(root: Path) -> list[str]:
     out: list[str] = []
+    seen: set[str] = set()
+    for name in ("Dockerfile",):
+        if _is_present_file(root / name):
+            out.append(name)
+            seen.add(name)
     for path in _iter_repo_files(root, limit=200):
         if path.name == "Dockerfile" or path.name.endswith(".Dockerfile"):
-            out.append(str(path.relative_to(root)))
+            rel = path.relative_to(root).as_posix()
+            if rel not in seen:
+                out.append(rel)
+                seen.add(rel)
+        if len(out) >= 20:
+            break
     return out[:20]
+
+
+def ensure_launch_files(
+    root: Path,
+    profile: dict[str, Any],
+    *,
+    compose_file: str | None = None,
+    dockerfile: str | None = None,
+) -> dict[str, Any]:
+    """Re-stat well-known and hinted launch files after a walk miss or flake."""
+    root = root.resolve()
+    compose = [str(item) for item in (profile.get("compose_files") or []) if item]
+    docker = [str(item) for item in (profile.get("dockerfiles") or []) if item]
+
+    def add_compose(rel: str) -> None:
+        if rel and _is_present_file(root / rel) and rel not in compose:
+            compose.append(rel)
+
+    def add_docker(rel: str) -> None:
+        if rel and _is_present_file(root / rel) and rel not in docker:
+            docker.append(rel)
+
+    add_compose(compose_file or "")
+    add_docker(dockerfile or "")
+    for name in COMPOSE_NAMES:
+        add_compose(name)
+    add_docker("Dockerfile")
+    out = dict(profile)
+    out["compose_files"] = compose
+    out["dockerfiles"] = docker
+    return out
 
 
 def _find_openapi(root: Path) -> list[str]:

@@ -28,7 +28,7 @@ Inspect each endpoint in code before loading it. POST is fine when the handler i
 # Suggested flow
 
 1. Discovery — repo(routes), then neighbors/read_file on handlers that do real work (DB, auth, locks, loops, hashing, downstream calls).
-2. Load — smoke at a low rate; when status_counts_reliable is true, confirm 2xx in status_counts before pushing harder. Increase rate, repeat, extend duration, or mix endpoints based on what you see. Repeat when p95 moves are noisy.
+2. Load — smoke at a low rate; when status_counts_reliable is true, confirm 2xx in status_counts before pushing harder. Increase rate, repeat, extend duration, or mix endpoints based on what you see. Repeat when p95 moves are noisy. A handler that holds a connection, lock, or session across a slow await will look stable at low rate; keep raising offered rate until error_rate, 5xx, drops, or p95 jumps, and put a cheap liveness/health path in that same run_k6 call as the control.
 3. Explain — tie numbers to code you read. Cite experiment_id, operation id, rates, p95_ms, and read_file line ranges.
 
 # Report
@@ -44,7 +44,7 @@ Include, as evidence allows:
 
 Keep experiment IDs and read_file ranges in the narrative or a short appendix so the report stands alone without terminal logs.
 
-When a small code change would move a metric you just measured with run_k6, end the report with one fenced yaml block whose first key is loadline_fix, using an experiment_id you ran, an operation_id from that call, a metric of p95_ms, error_rate, or achieved_rps, direction decrease for the first two and increase for achieved_rps, a control_operation_id measured in that same call, and a path plus start_line and end_line covered by a read_file you made, plus a one-sentence rationale.
+When a small code change would move a metric you just measured with run_k6, you must end the report with one fenced yaml block whose first key is loadline_fix, using the experiment_id of the call that showed saturation (not the smoke), an operation_id from that call, a metric of p95_ms, error_rate, or achieved_rps, direction decrease for the first two and increase for achieved_rps, a control_operation_id measured in that same call, and a path plus start_line and end_line covered by a read_file of the handler that holds the scarce resource, plus a one-sentence rationale. Do not cite a config flag as the path if the handler itself is the hold.
 
 ```yaml
 loadline_fix:

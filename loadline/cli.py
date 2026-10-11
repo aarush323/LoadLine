@@ -30,7 +30,7 @@ _WIN_DRIVE = re.compile(r"^([A-Za-z]):[\\/](.*)$")
 
 def normalize_user_repo_path(raw: Path | str) -> Path:
     """Map a Windows drive path to /mnt/<letter> when that mount exists in WSL."""
-    text = str(raw)
+    text = "".join(part.strip() for part in str(raw).replace("\r", "\n").split("\n")).strip()
     match = _WIN_DRIVE.match(text)
     if match:
         letter = match.group(1).lower()

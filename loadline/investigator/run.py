@@ -30,7 +30,8 @@ logger = logging.getLogger(__name__)
 
 USER_PROMPT = (
     "The app is booted. Find which endpoints break under load and why, from the code and from run_k6. "
-    "Your last message is the report."
+    "Raise rate until a real handler is no longer stable, keep a cheap health path in that same run_k6 call, "
+    "and end the report with a loadline_fix fence citing that experiment and the handler you read."
 )
 
 

@@ -58,6 +58,29 @@ def test_load_writes_successful_hints(tmp_path: Path, monkeypatch):
     assert "FIX_ENABLED" not in text
 
 
+def test_empty_no_entrypoint_does_not_call_setup(tmp_path: Path, monkeypatch):
+    calls: list[int] = []
+    blocked = BootOutcome(
+        status="blocked",
+        exit_code=10,
+        blocker={
+            "code": "no_entrypoint",
+            "summary": "No Compose file or Dockerfile was found.",
+            "retryable": True,
+            "security": False,
+        },
+    )
+    monkeypatch.setattr("loadline.load_cmd.boot_repository", lambda *a, **k: blocked)
+
+    def runner(repo, outcome):
+        calls.append(1)
+        return outcome
+
+    code = load_repository(tmp_path, require_auth=False, setup_runner=runner)
+    assert code == 10
+    assert calls == []
+
+
 def test_policy_refused_does_not_call_setup(tmp_path: Path, monkeypatch):
     calls: list[int] = []
     refused = BootOutcome(

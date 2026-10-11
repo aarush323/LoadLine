@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
@@ -20,7 +22,7 @@ from loadline.verification import (
     range_covered,
 )
 
-_FENCE = re.compile(r"```(?:ya?ml)?\s*\n(loadline_fix:\n.*?)```", re.S | re.I)
+_FENCE = re.compile(r"```(?:ya?ml)?\s*\n(loadline_fix:\n.*?)(?:```|\Z)", re.S | re.I)
 _METRICS = frozenset({"p95_ms", "error_rate", "achieved_rps"})
 _HEALTHY_P95_MS = 50.0
 _HEALTHY_ERROR_RATE = 0.05
@@ -128,8 +130,8 @@ def _snippet(repo: Path, path: str, start: int, end: int) -> str:
     if not target.is_file():
         return ""
     lines = target.read_text(encoding="utf-8", errors="ignore").splitlines()
-    start = max(1, start)
-    end = min(len(lines), end)
+    start = max(1, int(start) - 20)
+    end = min(len(lines), int(end) + 20)
     return "\n".join(f"{i}:{lines[i - 1]}" for i in range(start, end + 1))
 
 
@@ -142,16 +144,42 @@ def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
     )
 
 
+def _is_loadline_hint(path: str) -> bool:
+    return path.replace("\\", "/").strip('"') in {".loadline.yaml"}
+
+
+def _line_ending_only_dirty(repo: Path) -> bool:
+    unstaged = _git(repo, "diff", "--ignore-cr-at-eol", "--stat", check=False).stdout.strip()
+    staged = _git(repo, "diff", "--cached", "--ignore-cr-at-eol", "--stat", check=False).stdout.strip()
+    return not unstaged and not staged
+
+
+def _restore_line_ending_only_changes(repo: Path) -> None:
+    _git(repo, "checkout", "--", ".", check=False)
+
+
 def _worktree_blocks_patch(repo: Path) -> bool:
     out = _git(repo, "status", "--porcelain", check=False).stdout
+    blocking: list[str] = []
+    untracked: list[str] = []
     for line in out.splitlines():
         path = line[3:].strip()
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
-        if path.replace("\\", "/") in {".loadline.yaml", '".loadline.yaml"'}:
+        if _is_loadline_hint(path):
             continue
+        if line.startswith("??"):
+            untracked.append(path)
+            continue
+        blocking.append(path)
+    if untracked:
         return True
-    return False
+    if not blocking:
+        return False
+    if _line_ending_only_dirty(repo):
+        _restore_line_ending_only_changes(repo)
+        return False
+    return True
 
 
 def _is_loadline_repo(repo: Path) -> bool:
@@ -297,28 +325,110 @@ def _repo_from_run(run_dir: Path) -> Path | None:
     return path if path.is_dir() else None
 
 
+def _snippet_lines(snippet: str) -> list[tuple[int, str]]:
+    rows: list[tuple[int, str]] = []
+    for line in (snippet or "").splitlines():
+        if ":" not in line:
+            continue
+        number, text = line.split(":", 1)
+        try:
+            rows.append((int(number), text))
+        except ValueError:
+            continue
+    return rows
+
+
+def _strip_replacement(text: str) -> str:
+    raw = (text or "").strip()
+    fenced = re.search(r"```(?:python|py)?\s*\n(.*?)```", raw, re.S)
+    if fenced:
+        raw = fenced.group(1).strip()
+    return raw.replace("\r\n", "\n")
+
+
+def build_range_diff(path: str, snippet: str, start: int, end: int, replacement: str) -> str:
+    """Turn a cited-range replacement into a unified diff. Models do not have to emit diff syntax."""
+    rows = _snippet_lines(snippet)
+    if not rows:
+        return ""
+    new_body = _strip_replacement(replacement)
+    if not new_body:
+        return ""
+    new_lines = new_body.splitlines()
+    old_window = [text for _n, text in rows]
+    window_start = rows[0][0]
+    prefix = [text for n, text in rows if n < start]
+    suffix = [text for n, text in rows if n > end]
+    new_window = prefix + new_lines + suffix
+    if new_window == old_window:
+        return ""
+    diff = "".join(
+        difflib.unified_diff(
+            [f"{line}\n" for line in old_window],
+            [f"{line}\n" for line in new_window],
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+            n=3,
+        )
+    )
+    if not diff:
+        return ""
+    offset = window_start - 1
+
+    def _shift(match: re.Match[str]) -> str:
+        old_start = int(match.group(1)) + offset
+        old_count = match.group(2) or "1"
+        new_start = int(match.group(3)) + offset
+        new_count = match.group(4) or "1"
+        return f"@@ -{old_start},{old_count} +{new_start},{new_count} @@"
+
+    diff = re.sub(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", _shift, diff)
+    if not diff.startswith("diff --git "):
+        diff = f"diff --git a/{path} b/{path}\n{diff}"
+    return diff if diff.endswith("\n") else diff + "\n"
+
+
 def default_patch_diff(contract: dict[str, Any], snippet: str, before: dict[str, Any]) -> str:
+    from pydantic import BaseModel, Field
     from pydantic_ai import Agent
     from pydantic_ai.usage import UsageLimits
 
     from loadline.investigator.run import _default_investigator_model
 
+    class CitedReplacement(BaseModel):
+        replacement: str = Field(
+            description="New source for contract start_line through end_line only. No line numbers, no diff."
+        )
+
+    path = str(contract.get("path") or "file")
+    try:
+        start = int(contract["start_line"])
+        end = int(contract["end_line"])
+    except (KeyError, TypeError, ValueError):
+        return ""
     prompt = (
-        "Return only a unified diff for the single source file in the contract. "
-        "Change the smallest region that explains the cited metric. "
-        "Do not run a load test. Do not edit Compose, Dockerfiles, environment files, or hint files.\n\n"
+        "Return replacement source for the cited line range only. "
+        "Change the smallest region that explains the cited metric at the process's current configuration. "
+        "If the snippet holds a scarce resource (connection, lock, session) across an await, close that scope before the await. "
+        "Do not rely on flipping an environment flag that a runtime file already sets. "
+        "Do not edit Compose, Dockerfiles, environment files, or hint files.\n\n"
         f"Contract:\n{json.dumps(contract, indent=2)}\n\n"
         f"Before numbers from the experiment file:\n{json.dumps(before, indent=2)}\n\n"
-        f"Snippet:\n{snippet}\n"
+        f"Snippet with line numbers:\n{snippet}\n"
     )
-    agent = Agent(_default_investigator_model(), system_prompt=prompt)
-    result = agent.run_sync("Write the diff.", usage_limits=UsageLimits(request_limit=4))
-    text = str(result.output or "")
-    fenced = re.search(r"```(?:diff)?\s*\n(diff --git .*?)```", text, re.S)
-    if fenced:
-        return fenced.group(1).strip() + "\n"
-    start = text.find("diff --git ")
-    return (text[start:].strip() + "\n") if start >= 0 else ""
+    agent = Agent(
+        _default_investigator_model(),
+        system_prompt=prompt,
+        output_type=CitedReplacement,
+    )
+    result = agent.run_sync(
+        "Return the replacement source for the cited range.",
+        usage_limits=UsageLimits(request_limit=6, total_tokens_limit=None),
+    )
+    replacement = getattr(result.output, "replacement", None)
+    if not isinstance(replacement, str) or not replacement.strip():
+        return ""
+    return build_range_diff(path, snippet, start, end, replacement)
 
 
 def _default_replay(repo: Path, tool_input: dict[str, Any]) -> dict[str, Any]:
@@ -368,6 +478,24 @@ def _default_replay(repo: Path, tool_input: dict[str, Any]) -> dict[str, Any]:
         teardown_boot_outcome(outcome, repo)
 
 
+def _gh_argv() -> list[str] | None:
+    for candidate in (
+        "gh",
+        "gh.exe",
+        "/mnt/c/Program Files/GitHub CLI/gh.exe",
+        str(Path.home() / ".local/bin/gh"),
+    ):
+        path = Path(candidate)
+        if candidate in {"gh", "gh.exe"}:
+            found = shutil.which(candidate)
+            if found:
+                return [found]
+            continue
+        if path.is_file():
+            return [str(path)]
+    return None
+
+
 def _default_push(repo: Path, doc: dict[str, Any]) -> tuple[bool, str | None]:
     branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip()
     if branch in {"main", "master"} or not branch.startswith("loadline/verify-"):
@@ -377,16 +505,24 @@ def _default_push(repo: Path, doc: dict[str, Any]) -> tuple[bool, str | None]:
         return False, None
     pushed = _git(repo, "push", "-u", "origin", "HEAD", check=False)
     if pushed.returncode != 0:
+        detail = (pushed.stderr or pushed.stdout or "git push failed").strip()
+        print(f"error: git push failed ({detail.splitlines()[-1] if detail else 'unknown'})", flush=True)
+        return False, None
+    gh = _gh_argv()
+    if not gh:
+        print("error: gh is not installed; wrote pr-body.md", flush=True)
         return False, None
     body = render_pr_body(doc) or ""
     created = subprocess.run(
-        ["gh", "pr", "create", "--title", "Loadline: cited metric moved", "--body", body],
+        [*gh, "pr", "create", "--title", "Loadline: cited metric moved", "--body", body],
         cwd=str(repo),
         capture_output=True,
         text=True,
         check=False,
     )
     if created.returncode != 0:
+        detail = (created.stderr or created.stdout or "gh pr create failed").strip()
+        print(f"error: gh pr create failed ({detail.splitlines()[-1] if detail else 'unknown'})", flush=True)
         return False, None
     url = (created.stdout or "").strip().splitlines()
     return True, url[-1] if url else None
@@ -394,6 +530,13 @@ def _default_push(repo: Path, doc: dict[str, Any]) -> tuple[bool, str | None]:
 
 def _apply_patch(repo: Path, diff_text: str, branch: str) -> tuple[str | None, str]:
     original = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    if _git(repo, "rev-parse", "--verify", branch, check=False).returncode == 0:
+        if original == branch:
+            main = _git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", check=False).stdout.strip()
+            fallback = main.rsplit("/", 1)[-1] if main else "main"
+            _git(repo, "checkout", fallback, check=False)
+            original = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        _git(repo, "branch", "-D", branch, check=False)
     _git(repo, "checkout", "-b", branch)
     proc = subprocess.run(
         ["git", "-C", str(repo), "apply", "--check", "-"],

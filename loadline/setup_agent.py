@@ -159,6 +159,11 @@ def build_setup_agent(model: Any) -> Agent[SetupState, str]:
             ):
                 if (repo / candidate).is_file():
                     names.append(candidate)
+            from loadline.discovery.intake import _find_compose, _find_dockerfiles
+
+            for extra in (*_find_compose(repo), *_find_dockerfiles(repo)):
+                if extra not in names:
+                    names.append(extra)
             return {
                 "files": names,
                 "blocker": blocker,
@@ -218,7 +223,7 @@ def run_setup_agent(repo: Path, outcome: BootOutcome, *, model: Any | None = Non
         agent.run_sync(
             f"Boot status is {outcome.status}. Blocker: {summary}. Fix only .loadline.yaml if a hint can.",
             deps=state,
-            usage_limits=UsageLimits(request_limit=8),
+            usage_limits=UsageLimits(request_limit=None, total_tokens_limit=None),
         )
     except Exception as exc:
         if state.outcome.blocker is not None:

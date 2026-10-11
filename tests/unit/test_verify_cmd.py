@@ -7,7 +7,14 @@ import os
 import subprocess
 from pathlib import Path
 
-from loadline.verify_cmd import render_comparison, render_pr_body, verify_run
+from loadline.verify_cmd import (
+    _worktree_blocks_patch,
+    build_range_diff,
+    parse_fix_fence,
+    render_comparison,
+    render_pr_body,
+    verify_run,
+)
 
 DIFF = """diff --git a/app.py b/app.py
 --- a/app.py
@@ -89,6 +96,37 @@ def _after(p95: float, health: float = 7.0) -> dict:
     experiment = _experiment(p95, health=health)
     experiment["experiment_id"] = "exp-k6-0001"
     return experiment
+
+
+def test_build_range_diff_from_replacement():
+    snippet = "1:value = 1\n2:keep = True"
+    diff = build_range_diff("app.py", snippet, 1, 1, "value = 2")
+    assert "diff --git a/app.py b/app.py" in diff
+    assert "-value = 1" in diff
+    assert "+value = 2" in diff
+    assert "keep = True" in diff
+
+
+def test_unclosed_fence_at_eof_is_parsed():
+    text = (
+        "# Report\n\n```yaml\nloadline_fix:\n  experiment_id: exp-k6-0003\n"
+        "  operation_id: items\n  metric: p95_ms\n  direction: decrease\n"
+        "  control_operation_id: health\n  path: app.py\n  start_line: 1\n"
+        "  end_line: 1\n  rationale: one sentence\n"
+    )
+    fix = parse_fix_fence(text)
+    assert fix is not None
+    assert fix["experiment_id"] == "exp-k6-0003"
+    assert fix["path"] == "app.py"
+
+
+def test_crlf_only_worktree_is_restored_and_not_blocked(tmp_path: Path):
+    repo = tmp_path / "app"
+    _repo(repo)
+    (repo / "app.py").write_text("value = 1\r\n", encoding="utf-8")
+    assert b"\r\n" in (repo / "app.py").read_bytes()
+    assert _worktree_blocks_patch(repo) is False
+    assert (repo / "app.py").read_bytes() == b"value = 1\n"
 
 
 def test_missing_fence_does_not_call_the_patch_model(tmp_path: Path, monkeypatch):
