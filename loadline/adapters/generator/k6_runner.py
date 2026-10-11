@@ -12,6 +12,7 @@ from loadline.adapters.generator.k6_compiler import CompileError, compile_plan
 from loadline.adapters.generator.k6_summary import K6Summary, parse_handle_summary, successful_request_count
 from loadline.adapters.observability.docker_stats import StatsCollector
 from loadline.constants import GEN_CPUS, GEN_MEM, K6_IMAGE_DIGEST
+from loadline.core.hints import DEFAULT_SLO_ERR_RATE, DEFAULT_SLO_P95_MS
 from loadline.core.verdict import StepMetrics, compute_verdict
 
 _generator_lock = threading.Lock()
@@ -45,6 +46,8 @@ def run_k6_plan(
     timeout_s: int = 600,
     stats_collector: StatsCollector | None = None,
     auth_secrets: dict[str, str] | None = None,
+    slo_p95_ms: float | None = None,
+    slo_err_rate: float | None = None,
 ) -> K6RunResult:
     compiled = compile_plan(plan, allowed_hosts, auth_secrets=auth_secrets)
     if isinstance(compiled, CompileError):
@@ -142,8 +145,8 @@ def run_k6_plan(
         p95_ms=summary.p95_ms,
         p99_ms=summary.p99_ms if samples >= 1000 else None,
         err_rate=summary.err_rate or 0.0,
-        slo_p95_ms=2000.0,
-        slo_err_rate=0.05,
+        slo_p95_ms=float(slo_p95_ms) if slo_p95_ms is not None else DEFAULT_SLO_P95_MS,
+        slo_err_rate=float(slo_err_rate) if slo_err_rate is not None else DEFAULT_SLO_ERR_RATE,
         successful_samples=samples,
         probe_p95_ms=None,
         probe_baseline_p95_ms=None,

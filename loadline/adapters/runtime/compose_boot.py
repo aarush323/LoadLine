@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 import re
 import threading
@@ -24,13 +25,15 @@ from loadline.core.readiness import (
     depends_on_service_names,
     direct_depends_on,
     duration_seconds,
+    excerpt_compose_up_output,
     health_timeout_blocker,
     healthcheck_budget_s,
     wait_until_http_ready,
 )
 from loadline.core.env_policy import load_repo_dotenv
 from loadline.core.sandbox_policy import apply_sandbox_policy
-from loadline.discovery.intake import discover_capabilities, discover_profile, load_compose
+from loadline.adapters.runtime.compose_merge import load_project_compose
+from loadline.discovery.intake import discover_capabilities, discover_profile
 from loadline.adapters.runtime.docker_runner import (
     create_internal_network,
     docker_cmd,
@@ -45,6 +48,10 @@ from loadline.core.data_readiness import DatasetMeasurement
 from loadline.adapters.runtime.run_cleanup import RunCleanupState, register_run_cleanup, unregister_run_cleanup
 from loadline.paths import allocate_run_dir
 from loadline.ui.run_console import BootProgress
+
+_COMPOSE_PROFILE: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "loadline_compose_profile", default=None
+)
 
 
 def _persist_discovery_artifacts(run_dir: Path, profile: dict[str, Any], capabilities: dict[str, Any]) -> None:
@@ -95,7 +102,23 @@ def _anchor_build_contexts(compose: dict[str, Any], repo: Path) -> None:
 _HTTP_IN_HEALTHCHECK = re.compile(r"https?://[^:/\s]+:(\d+)(/[^\s'\"\]]*)?", re.I)
 _UVICORN_PORT = re.compile(r"--port(?:=|\s+)(\d+)", re.I)
 
-_DB_IMAGE_MARKERS = ("postgres", "mysql", "mariadb", "mongo", "redis", "memcached", "clickhouse")
+_DB_IMAGE_MARKERS = (
+    "postgres",
+    "mysql",
+    "mariadb",
+    "mongo",
+    "redis",
+    "memcached",
+    "clickhouse",
+    "cassandra",
+    "kafka",
+    "zookeeper",
+    "elasticsearch",
+    "rabbitmq",
+    "nats",
+    "minio",
+)
+_APP_SERVER_MARKERS = ("uvicorn", "gunicorn", "hypercorn", "nginx", "node", "java", "daphne")
 
 
 def _is_dependency_db_image(image: str) -> bool:
@@ -103,8 +126,25 @@ def _is_dependency_db_image(image: str) -> bool:
     return any(marker in lower for marker in _DB_IMAGE_MARKERS)
 
 
-def _service_has_http_port(svc: dict[str, Any]) -> bool:
-    return bool(svc.get("ports") or svc.get("expose"))
+def _is_infra_service(svc: dict[str, Any]) -> bool:
+    return _is_dependency_db_image(str(svc.get("image") or ""))
+
+
+def _has_app_server_command(svc: dict[str, Any]) -> bool:
+    cmd = _command_text(svc).lower()
+    return any(marker in cmd for marker in _APP_SERVER_MARKERS)
+
+
+def _is_http_app_candidate(name: str, svc: dict[str, Any]) -> bool:
+    if _is_infra_service(svc):
+        return False
+    if svc.get("build"):
+        return True
+    if _parse_healthcheck_http(svc):
+        return True
+    if _has_app_server_command(svc):
+        return True
+    return False
 
 
 def _parse_healthcheck_http(svc: dict[str, Any]) -> tuple[int, str] | None:
@@ -144,12 +184,11 @@ def _listen_port_from_service(svc: dict[str, Any]) -> int | None:
 
 
 def _score_app_service_candidate(name: str, svc: dict[str, Any], services: dict[str, Any]) -> int:
-    image = str(svc.get("image") or "")
-    if _is_dependency_db_image(image):
-        return -1
-    if not (svc.get("build") or _service_has_http_port(svc)):
+    if not _is_http_app_candidate(name, svc):
         return -1
     score = 0
+    if _parse_healthcheck_http(svc):
+        score += 30
     for dep in depends_on_service_names(svc):
         dep_svc = services.get(dep)
         if isinstance(dep_svc, dict) and _is_dependency_db_image(str(dep_svc.get("image") or "")):
@@ -173,9 +212,6 @@ def _infer_app_service(compose: dict[str, Any], hints: LoadlineHints | None) -> 
     services = compose.get("services") or {}
     if not isinstance(services, dict):
         return None
-    for name, svc in services.items():
-        if isinstance(svc, dict) and _parse_healthcheck_http(svc):
-            return name
     ranked: list[tuple[int, str]] = []
     for name, svc in services.items():
         if not isinstance(svc, dict):
@@ -187,6 +223,79 @@ def _infer_app_service(compose: dict[str, Any], hints: LoadlineHints | None) -> 
         return None
     ranked.sort(key=lambda item: (-item[0], item[1]))
     return ranked[0][1]
+
+
+def _http_app_blocker(compose: dict[str, Any]) -> dict[str, Any]:
+    services = compose.get("services") or {}
+    names = [n for n, svc in services.items() if isinstance(svc, dict)] if isinstance(services, dict) else []
+    infra = [
+        n
+        for n, svc in (services.items() if isinstance(services, dict) else [])
+        if isinstance(svc, dict) and _is_infra_service(svc)
+    ]
+    others = [n for n in names if n not in infra]
+    listed = ", ".join(names) if names else "(none)"
+    if not others:
+        return {
+            "code": "needs_input",
+            "summary": f"Compose has no HTTP application. Services are data or messaging: {listed}.",
+            "retryable": False,
+            "security": False,
+            "user_can_provide": [],
+            "remediation": [],
+        }
+    return {
+        "code": "needs_input",
+        "summary": "No application service found in compose.",
+        "retryable": False,
+        "security": False,
+        "user_can_provide": ["app_service"],
+        "remediation": [{"kind": "hint", "field": "app_service", "reason": "Name the HTTP app service"}],
+    }
+
+
+def _compose_has_http_app(path: Path) -> bool:
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    services = data.get("services") or {}
+    if not isinstance(services, dict):
+        return False
+    return any(_is_http_app_candidate(name, svc) for name, svc in services.items() if isinstance(svc, dict))
+
+
+def _apply_runtime_hints(raw: dict[str, Any], app_service: str, hints: LoadlineHints | None) -> None:
+    if hints is None:
+        return
+    services = raw.get("services")
+    if not isinstance(services, dict):
+        return
+    svc = services.get(app_service)
+    if not isinstance(svc, dict):
+        return
+    if hints.command:
+        svc["command"] = hints.command
+    if not hints.env:
+        return
+    existing = svc.get("environment")
+    merged: dict[str, str] = {}
+    if isinstance(existing, dict):
+        merged = {str(k): str(v) for k, v in existing.items()}
+    elif isinstance(existing, list):
+        for item in existing:
+            if isinstance(item, str) and "=" in item:
+                key, val = item.split("=", 1)
+                merged[key] = val
+            elif isinstance(item, str):
+                merged[item] = ""
+    merged.update({str(k): str(v) for k, v in hints.env.items()})
+    if isinstance(existing, list):
+        svc["environment"] = [f"{k}={v}" for k, v in merged.items()]
+    else:
+        svc["environment"] = merged
 
 
 def _health_path_candidates(primary: str) -> list[str]:
@@ -201,11 +310,19 @@ def _resolve_compose_path(repo: Path, profile: dict[str, Any], hints: LoadlineHi
     if hints and hints.compose_file:
         p = repo / hints.compose_file
         return p if p.is_file() else None
-    files = profile.get("compose_files") or []
-    if files:
-        p = repo / files[0]
-        return p if p.is_file() else None
-    return None
+    files = [str(rel) for rel in (profile.get("compose_files") or [])]
+    ranked: list[tuple[int, int, int, Path]] = []
+    for index, rel in enumerate(files):
+        path = repo / rel
+        if not path.is_file():
+            continue
+        has_app = 1 if _compose_has_http_app(path) else 0
+        depth = rel.count("/")
+        ranked.append((-has_app, depth, index, path))
+    if not ranked:
+        return None
+    ranked.sort()
+    return ranked[0][3]
 
 
 def _health_url(
@@ -237,24 +354,40 @@ def _compose_cmd(
 ) -> Any:
     import subprocess
 
-    return subprocess.run(
-        [
-            "docker",
-            "compose",
-            "-p",
-            project,
-            "--project-directory",
-            str(repo),
-            "-f",
-            str(compose_file),
-            *sub,
-        ],
-        cwd=str(repo),
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
+    argv = [
+        "docker",
+        "compose",
+        "-p",
+        project,
+        "--project-directory",
+        str(repo),
+    ]
+    profile = _COMPOSE_PROFILE.get()
+    if profile:
+        argv.extend(["--profile", profile])
+    argv.extend(["-f", str(compose_file), *sub])
+    try:
+        return subprocess.run(
+            argv,
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        return subprocess.CompletedProcess(
+            argv,
+            returncode=124,
+            stdout=stdout,
+            stderr=f"{stderr}\ncompose command timed out after {timeout}s".strip(),
+        )
 
 
 def _service_container_id(project: str, compose_file: Path, repo: Path, service: str) -> str | None:
@@ -620,6 +753,12 @@ def boot_repository(
         )
 
     compose_path = _resolve_compose_path(repo, profile, hints)
+    if compose_path is not None and progress is not None:
+        try:
+            shown = compose_path.relative_to(repo).as_posix()
+        except ValueError:
+            shown = str(compose_path)
+        progress.boot_note(f"boot: compose file {shown}")
     if compose_path is None:
         from loadline.adapters.runtime.dockerfile_boot import boot_dockerfile_repository
 
@@ -631,7 +770,33 @@ def boot_repository(
             teardown=teardown,
         )
 
-    raw = load_compose(compose_path)
+    raw, merge_err = load_project_compose(repo, compose_path)
+    if merge_err or raw is None:
+        run_id, run_dir = allocate_run_dir(repo)
+        _persist_discovery_artifacts(run_dir, profile, capabilities)
+        return _finish_blocked(
+            run_dir,
+            BootOutcome(
+                status="blocked",
+                exit_code=10,
+                blocker={
+                    "code": "boot_failed",
+                    "summary": merge_err or "compose config failed",
+                    "retryable": True,
+                    "security": False,
+                    "user_can_provide": ["compose_file"],
+                    "remediation": [
+                        {
+                            "kind": "hint",
+                            "field": "compose_file",
+                            "reason": "Compose config could not be merged",
+                        }
+                    ],
+                },
+                capabilities=capabilities,
+                run_id=run_id,
+            ),
+        )
     _anchor_build_contexts(raw, repo)
     app_service = _infer_app_service(raw, hints)
     if not app_service:
@@ -642,18 +807,13 @@ def boot_repository(
             BootOutcome(
                 status="needs_input",
                 exit_code=9,
-                blocker={
-                    "code": "needs_input",
-                    "summary": "No application service found in compose.",
-                    "retryable": False,
-                    "security": False,
-                    "user_can_provide": ["app_service"],
-                    "remediation": [{"kind": "hint", "field": "app_service", "reason": "Name the HTTP app service"}],
-                },
+                blocker=_http_app_blocker(raw),
                 capabilities=capabilities,
                 run_id=run_id,
             ),
         )
+
+    _apply_runtime_hints(raw, app_service, hints)
 
     run_id, run_dir = allocate_run_dir(repo)
     run_network = f"loadline_net_{run_id}"
@@ -745,6 +905,7 @@ def boot_repository(
             extra=lambda: _teardown(project, runtime_compose_path, repo, run_id),
         )
     )
+    profile_token = _COMPOSE_PROFILE.set(hints.compose_profile if hints and hints.compose_profile else None)
     try:
         if progress is not None:
             progress.boot_note("boot: compose up --build")
@@ -756,7 +917,7 @@ def boot_repository(
                 repo,
                 ["up", "-d", "--build"],
                 progress=progress,
-                timeout=900,
+                timeout=2400,
             )
 
         up, up_failures = compose_up_with_retries(_run_up, sleep=time.sleep)
@@ -767,7 +928,7 @@ def boot_repository(
                     n=failure.n,
                     signature=sig,
                     result="boot_failed",
-                    detail=failure.output[:500],
+                    detail=excerpt_compose_up_output(failure.output),
                 )
             )
 
@@ -844,6 +1005,9 @@ def boot_repository(
                             attempts.append(BootAttempt(n=next_n, signature=sig, result="success"))
                             boot_info = {
                                 "health": {"status": "ok", "url": health_url, "path": health_path},
+                                "app_service": app_service,
+                                "container_port": port,
+                                "compose_file": str(compose_path.relative_to(repo)),
                                 "services": [
                                     {"name": name, "role": "app" if name == app_service else "dependency"}
                                     for name in (plan.get("services") or {})
@@ -899,6 +1063,7 @@ def boot_repository(
             ),
         )
     finally:
+        _COMPOSE_PROFILE.reset(profile_token)
         unregister_run_cleanup()
         if teardown:
             _teardown(project, runtime_compose_path, repo, run_id)

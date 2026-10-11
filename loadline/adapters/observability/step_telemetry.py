@@ -45,6 +45,9 @@ def run_instrumented_k6_plan(
     if plan_path.is_file():
         launch_plan = json.loads(plan_path.read_text())
     collector = StatsCollector(run_id=run_id, service_roles=_service_roles_from_launch_plan(launch_plan))
+    from loadline.core.hints import slo_from_hints
+
+    slo_p95_ms, slo_err_rate = slo_from_hints(repo)
     k6 = run_k6_plan(
         plan=plan,
         allowed_hosts=allowed_hosts,
@@ -54,6 +57,8 @@ def run_instrumented_k6_plan(
         wave_name=wave_name,
         timeout_s=timeout_s,
         stats_collector=collector,
+        slo_p95_ms=slo_p95_ms,
+        slo_err_rate=slo_err_rate,
     )
 
     placement = engine_placement()

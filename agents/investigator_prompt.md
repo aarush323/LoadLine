@@ -43,3 +43,18 @@ Include, as evidence allows:
 - Next step: smallest plausible fix and a validation run_k6; do not claim a fix is validated without a post-fix experiment.
 
 Keep experiment IDs and read_file ranges in the narrative or a short appendix so the report stands alone without terminal logs.
+
+When a small code change would move a metric you just measured with run_k6, end the report with one fenced yaml block whose first key is loadline_fix, using an experiment_id you ran, an operation_id from that call, a metric of p95_ms, error_rate, or achieved_rps, direction decrease for the first two and increase for achieved_rps, a control_operation_id measured in that same call, and a path plus start_line and end_line covered by a read_file you made, plus a one-sentence rationale.
+
+```yaml
+loadline_fix:
+  experiment_id: exp-k6-0003
+  operation_id: items
+  metric: p95_ms
+  direction: decrease
+  control_operation_id: health
+  path: app.py
+  start_line: 12
+  end_line: 18
+  rationale: one sentence
+```

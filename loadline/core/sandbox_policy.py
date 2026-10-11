@@ -177,6 +177,11 @@ def apply_sandbox_policy(
                     blocker_code="policy_refused",
                     blocker_summary=f"service {name} uses host {forbidden}",
                 )
+        if "container_name" in svc:
+            diffs.append(
+                PolicyDiff(3, f"dropped container_name on {name}", svc.get("container_name"), None)
+            )
+            svc.pop("container_name", None)
         ports = svc.get("ports") or []
         if ports:
             diffs.append(PolicyDiff(3, f"removed published ports on {name}", ports, []))

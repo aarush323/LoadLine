@@ -292,6 +292,8 @@ def boot_dockerfile_repository(
             launch_plan=launch_plan,
             boot={
                 "health": {"status": "ok", "url": health_url, "path": health_path},
+                "app_service": service,
+                "container_port": port,
                 "services": [{"name": service, "role": "app"}],
                 "run_id": run_id,
                 "run_dir": str(run_dir),

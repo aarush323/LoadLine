@@ -21,7 +21,7 @@ from loadline.entire_runtime.graph import GraphClient
 from loadline.entire_runtime.install import ensure_toolchain
 from loadline.core.env_policy import load_repo_dotenv
 from loadline.investigator.agent_factory import build_investigator_agent, default_usage_limits, wrap_agent
-from loadline.investigator.deps import InvestigationDeps
+from loadline.investigator.deps import InvestigationDeps, ReadRange
 from loadline.investigator.prompt import load_investigator_prompt
 from loadline.ui.agent_trace import format_stream_event
 from pydantic_ai.run import AgentRunResultEvent
@@ -66,6 +66,27 @@ def write_agent_report(
         paths={"report_md": str(md_path), "report_json": str(json_path)},
     )
     return md_path
+
+
+def persist_reads(run_dir: Path, ranges: list[ReadRange]) -> Path:
+    """Write one JSON object per successful read_file. Replay does not invent ranges."""
+    path = run_dir / "reads.jsonl"
+    lines: list[str] = []
+    for index, item in enumerate(ranges, start=1):
+        evidence_id = item.evidence_id or f"ev-read-{index}"
+        lines.append(
+            json.dumps(
+                {
+                    "path": item.path,
+                    "start_line": item.start_line,
+                    "end_line": item.end_line,
+                    "evidence_id": evidence_id,
+                },
+                separators=(",", ":"),
+            )
+        )
+    path.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
+    return path
 
 
 def _sealed_auth_profiles(repo_root: Path) -> dict[str, dict[str, str]]:
@@ -192,6 +213,7 @@ async def run_investigation(
     agent = wrap_agent(agent, run_id=run_id, fast=fast)
     limits = usage_limits if usage_limits is not None else default_usage_limits()
 
+    outcome: InvestigationResult
     try:
         import neatlogs
 
@@ -204,7 +226,7 @@ async def run_investigation(
             result = await _run_agent_with_trace(agent, deps, limits, console)
         text = str(result.output)
         write_agent_report(run_dir, run_id, text)
-        return InvestigationResult(run_id, run_dir, "completed", agent_output=text)
+        outcome = InvestigationResult(run_id, run_dir, "completed", agent_output=text)
     except Exception as exc:
         reason = f"{type(exc).__name__}: {exc}"
         logger.exception("investigator failed")
@@ -215,7 +237,9 @@ async def run_investigation(
             f"# Investigation incomplete\n\n{reason}\n",
             run_state="investigation_incomplete",
         )
-        return InvestigationResult(run_id, run_dir, "investigation_incomplete", reason=reason)
+        outcome = InvestigationResult(run_id, run_dir, "investigation_incomplete", reason=reason)
+    persist_reads(run_dir, deps.read_ranges)
+    return outcome
 
 
 def run_investigation_sync(**kwargs: Any) -> InvestigationResult:

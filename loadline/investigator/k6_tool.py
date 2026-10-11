@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from loadline.adapters.generator.k6_compiler import CompileError, compile_plan
 from loadline.adapters.generator.k6_operation_metrics import sanitize_operation_metrics
 from loadline.adapters.generator.k6_runner import run_k6_plan
+from loadline.core.hints import slo_from_hints
 from loadline.investigator.deps import InvestigationDeps
 
 _PATH_TEMPLATE = re.compile(r"\{[^}]+\}")
@@ -323,6 +324,7 @@ def run_k6(
         )
     docker_timeout = int(duration_s) + _DOCKER_TIMEOUT_GRACE_S
     persist_plan = _sanitize_plan_for_persist(plan)
+    slo_p95_ms, slo_err_rate = slo_from_hints(deps.repo_root)
     result = run_k6_plan(
         plan=persist_plan,
         allowed_hosts=allowed,
@@ -332,6 +334,8 @@ def run_k6(
         wave_name=wave,
         timeout_s=docker_timeout,
         auth_secrets=auth_secrets,
+        slo_p95_ms=slo_p95_ms,
+        slo_err_rate=slo_err_rate,
     )
     if not result.summary.parse_ok:
         excerpt = (result.stderr or result.summary.error or "k6 failed")[:2000]

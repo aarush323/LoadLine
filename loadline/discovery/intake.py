@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -37,18 +38,17 @@ CLIENT_LIBRARY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 def _iter_repo_files(root: Path, *, suffixes: tuple[str, ...] = (), limit: int = 500) -> Iterator[Path]:
     count = 0
-    for path in root.rglob("*"):
-        if count >= limit:
-            return
-        if not path.is_file():
-            continue
-        rel_parts = path.relative_to(root).parts
-        if any(part in SKIP_DIR_NAMES for part in rel_parts[:-1]):
-            continue
-        if suffixes and path.suffix not in suffixes and path.name not in suffixes:
-            continue
-        count += 1
-        yield path
+    root = root.resolve()
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if name not in SKIP_DIR_NAMES]
+        for name in filenames:
+            if count >= limit:
+                return
+            path = Path(dirpath) / name
+            if suffixes and path.suffix not in suffixes and path.name not in suffixes:
+                continue
+            count += 1
+            yield path
 
 
 def _git_meta(root: Path) -> dict[str, Any]:
@@ -70,11 +70,30 @@ def _git_meta(root: Path) -> dict[str, Any]:
         return {"sha": None, "dirty": None}
 
 
+_COMPOSE_MAX_DEPTH = 6
+_COMPOSE_MAX_FILES = 20
+
+
 def _find_compose(root: Path) -> list[str]:
     found: list[str] = []
+    seen: set[str] = set()
     for name in COMPOSE_NAMES:
         if (root / name).is_file():
             found.append(name)
+            seen.add(name)
+    for path in _iter_repo_files(root, limit=400):
+        if len(found) >= _COMPOSE_MAX_FILES:
+            break
+        rel = path.relative_to(root)
+        if len(rel.parts) - 1 > _COMPOSE_MAX_DEPTH:
+            continue
+        if path.name not in COMPOSE_NAMES:
+            continue
+        rel_s = rel.as_posix()
+        if rel_s in seen:
+            continue
+        found.append(rel_s)
+        seen.add(rel_s)
     return found
 
 
@@ -384,7 +403,7 @@ def _contradictions(
             {
                 "kind": "multiple_compose_files",
                 "detail": compose_files,
-                "message": "More than one compose file at repository root; all are listed, not merged.",
+                "message": "More than one compose file; boot ranks the file that contains an HTTP app.",
             }
         )
     if compose_files and dockerfiles:

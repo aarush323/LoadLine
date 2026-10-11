@@ -166,8 +166,10 @@ def read_file(
     start = max(1, start_line)
     end = min(len(lines), end_line)
     snippet = "\n".join(f"{i + 1}:{lines[i]}" for i in range(start - 1, end))
-    deps.read_ranges.append(ReadRange(path=path, start_line=start, end_line=end))
-    evidence_id = f"ev-read-{len(deps.read_ranges)}"
+    evidence_id = f"ev-read-{len(deps.read_ranges) + 1}"
+    deps.read_ranges.append(
+        ReadRange(path=path, start_line=start, end_line=end, evidence_id=evidence_id)
+    )
     return {"path": path, "start_line": start, "end_line": end, "snippet": snippet[:6000], "evidence_id": evidence_id}
 
 

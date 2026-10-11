@@ -13,6 +13,8 @@ def test_prompt_lists_three_tools():
     assert "run_k6(endpoints" in text
     assert "status_counts_reliable" in text
     assert "Observed" in text
+    assert "loadline_fix" in text
+    assert "FIX_ENABLED" not in text
     assert "Loadline fills" not in text
     assert "{{BOARD}}" not in text
     loaded = load_investigator_prompt(root)

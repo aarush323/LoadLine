@@ -15,6 +15,7 @@ class ReadRange:
     path: str
     start_line: int
     end_line: int
+    evidence_id: str = ""
 
 
 @dataclass

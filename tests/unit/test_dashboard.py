@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 from loadline.cli import main
@@ -32,8 +33,12 @@ def _make_run(root: Path, run_id: str, repo: str, offered: float, dropped: int =
 
 def test_scan_runs_newest_first_and_fields(tmp_path: Path):
     runs = tmp_path / "runs"
-    _make_run(runs, "aaa111", "/repos/unreliable-blind", 3.0)
-    _make_run(runs, "bbb222", "/repos/checkout-api", 20.0, dropped=5)
+    older = _make_run(runs, "aaa111", "/repos/unreliable-blind", 3.0)
+    newer = _make_run(runs, "bbb222", "/repos/checkout-api", 20.0, dropped=5)
+    for path in (older / "ledger.jsonl", older / "report.json"):
+        os.utime(path, (1_700_000_000, 1_700_000_000))
+    for path in (newer / "ledger.jsonl", newer / "report.json"):
+        os.utime(path, (1_700_000_100, 1_700_000_100))
     summaries = scan_runs(runs)
     assert [s.run_id for s in summaries] == ["bbb222", "aaa111"]
     assert summaries[0].repo_name == "checkout-api"

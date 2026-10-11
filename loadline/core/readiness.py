@@ -204,6 +204,27 @@ _LOG_ERROR_MARKERS = (
 )
 
 
+_COMPOSE_UP_ERROR_MARKERS = ("error", "failed", "conflict", "fatal", "denied")
+
+
+def excerpt_compose_up_output(text: str, *, max_chars: int = 800) -> str:
+    """Prefer error-bearing lines from compose up; otherwise the last lines."""
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    lines = raw.splitlines()
+    hits: list[str] = []
+    seen: set[str] = set()
+    for ln in lines:
+        low = ln.lower()
+        if any(marker in low for marker in _COMPOSE_UP_ERROR_MARKERS) and ln not in seen:
+            hits.append(ln)
+            seen.add(ln)
+    if hits:
+        return "\n".join(hits)[:max_chars]
+    return "\n".join(lines[-12:])[:max_chars]
+
+
 def excerpt_boot_log(text: str, *, tail_lines: int = 12, max_chars: int = 3000) -> str:
     """Prefer error-bearing lines from a long traceback; otherwise keep a short tail."""
     raw = (text or "").strip()

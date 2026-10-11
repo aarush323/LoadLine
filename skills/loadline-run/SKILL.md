@@ -2,7 +2,7 @@
 name: loadline-run
 description: >-
   Run Loadline load-testing and scalability investigation on the user's repository
-  using analyze --boot --json, optional .loadline.yaml hints, and loadline run.
+  using loadline load, optional .loadline.yaml hints, and loadline run.
 ---
 
 ## 1. When to use this skill
@@ -15,32 +15,27 @@ Before running Loadline, confirm:
 
 - **Docker or Podman** is available for sandboxed boots and load (k6 runs as a container on the run network).
 - **Git** is installed (Entire Graph and repository metadata depend on it).
-- A **model API key** is configured for the provider named in `LOADLINE_MODEL` (Loadline checks credentials before Docker on `run` and `analyze --boot`).
+- A **model API key** is configured for the provider named in `LOADLINE_MODEL` (Loadline checks credentials before Docker on `run` and `load`).
 - **Entire** is provisioned by Loadline (`loadline doctor`); you do not install Entire separately for the agent workflow.
 - **k6** is provided as a **pinned container image digest** inside Loadline, not as a binary on `PATH`.
 
 Run `loadline --version` and `loadline doctor` (without `--check-model` unless the user accepts provider billing).
 
-## 3. Boot JSON
+## 3. Trial boot
 
-From the repository root, run:
+From the Loadline project, run:
 
 ```bash
-loadline analyze --boot --json
+loadline load <repo>
 ```
 
-Read **`status`**, **`blocker`**, **`attempts`**, and **`config_schema`** (`loadline-hints/1`). If the JSON is malformed, stop and show the raw output. Do not guess fields that are absent.
+Read **`status`**, **`app_service`**, **`health_path`**, and any **`blocker`**. If the JSON is malformed, stop and show the raw output. Do not guess fields that are absent.
 
-Allowed hint keys when editing `.loadline.yaml` are only those in `tech_doc.md` §16.3: `schema_version`, `compose_file`, `dockerfile`, `compose_profile`, `app_service`, `container_port`, `health_path`, `command`, `env`, `exclude_operations`, `slo.p95_ms`, `slo.err_rate`.
+`loadline load` trial-boots the repo and, on a healthy boot, writes `.loadline.yaml`. It does not run k6. An in-product setup helper handles retryable, non-security blockers. Do not hand-edit `.loadline.yaml` for those. The helper may write only `schema_version`, `compose_file`, `dockerfile`, `app_service`, `container_port`, `health_path`, and `compose_profile`. It must not write `env`, `command`, `exclude_operations`, or SLO keys, and it must not edit Compose, Dockerfiles, or app source.
 
 ## 4. Retryable blocked boots
 
-If **`status`** is `blocked`, **`blocker.retryable`** is true, and **`blocker.security`** is false:
-
-- Apply **only** a `remediation.field` from the boot JSON that appears in the §16.3 key table above.
-- Make the **smallest** edit to `.loadline.yaml` (create the file if needed with `schema_version: 1`). Do not add unknown keys, secrets, or host URLs.
-- Re-run `loadline analyze --boot --json`.
-- Stop after **two corrections** (three boot attempts total including the first).
+If **`status`** is `blocked`, **`blocker.retryable`** is true, and **`blocker.security`** is false, the in-product helper already ran (or will run) inside `loadline load`. Do not apply a second round of hand-written hints for the same blocker. If `load` still reports blocked after that, stop and show the blocker.
 
 Do **not** edit application source, Compose files, or Dockerfiles.
 
@@ -53,7 +48,7 @@ If **`status`** is `needs_input`, or **`blocker.security`** is true, **stop** an
 If **`status`** is `booted`, run:
 
 ```bash
-loadline run --repo .
+loadline run --repo <repo>
 ```
 
 Then open the run directory's **`report.md`** and **`report.json`** (under Loadline's home, not inside the target repo). Summarise measured numbers, findings, hypotheses, limitations, and any `investigation_incomplete` state honestly. Do **not** edit application source, Compose, or Dockerfiles. Do **not** invent bottlenecks, trace URLs, or numbers that are not in the report.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -24,6 +25,21 @@ from loadline.ui.render import is_tty
 from loadline.ui.run_console import RunConsole
 
 _PICKER_LIMIT = 15
+_WIN_DRIVE = re.compile(r"^([A-Za-z]):[\\/](.*)$")
+
+
+def normalize_user_repo_path(raw: Path | str) -> Path:
+    """Map a Windows drive path to /mnt/<letter> when that mount exists in WSL."""
+    text = str(raw)
+    match = _WIN_DRIVE.match(text)
+    if match:
+        letter = match.group(1).lower()
+        rest = match.group(2).replace("\\", "/")
+        mounted = Path(f"/mnt/{letter}") / rest
+        literal = Path(text)
+        if not literal.exists() and mounted.exists():
+            return mounted.resolve()
+    return Path(text).resolve()
 
 
 def _print_setup_error(exc: EntireSetupError) -> int:
@@ -320,6 +336,11 @@ def main(argv: list[str] | None = None) -> int:
     doc = sub.add_parser("doctor")
     doc.add_argument("--cleanup", action="store_true")
     doc.add_argument("--check-model", action="store_true")
+    load_p = sub.add_parser(
+        "load",
+        help="Trial-boot a repo and save .loadline.yaml. Does not run k6.",
+    )
+    load_p.add_argument("repo", nargs="?", type=Path, default=Path("."))
     analyze_parser = sub.add_parser("analyze")
     analyze_parser.add_argument("repo", nargs="?", type=Path, default=Path("."))
     analyze_parser.add_argument("--openapi", type=Path)
@@ -367,12 +388,27 @@ def main(argv: list[str] | None = None) -> int:
     dash_p.add_argument("--port", type=int, default=8123, help="Port for --serve (default 8123).")
     dash_p.add_argument("--no-browser", action="store_true", help="Do not auto-open a browser with --serve.")
     dash_p.add_argument("--export", type=Path, help="Write a self-contained dashboard HTML file (use with --run).")
+    verify_p = sub.add_parser(
+        "verify",
+        help="Replay the cited k6 call. Open a pull request only if that metric moved.",
+    )
+    verify_p.add_argument("run_dir", type=Path)
+    verify_p.add_argument("--no-pr", action="store_true", help="Write verification.json and do not push.")
+    verify_p.add_argument(
+        "--i-am-patching-loadline",
+        action="store_true",
+        help="Allow verify to patch the Loadline repository. The demo does not use this.",
+    )
     args = parser.parse_args(argv)
     if args.version:
         print(__version__)
         return 0
     if args.command == "doctor":
         return doctor(cleanup=args.cleanup, check_model=args.check_model)
+    if args.command == "load":
+        from loadline.load_cmd import load_repository
+
+        return load_repository(normalize_user_repo_path(args.repo))
     if args.command == "analyze":
         if args.live_openapi and args.openapi is None:
             print("error: --live-openapi requires --openapi", file=sys.stderr)
@@ -393,7 +429,7 @@ def main(argv: list[str] | None = None) -> int:
             no_color=args.no_color,
         )
         result = run_loadline(
-            args.repo.resolve(),
+            normalize_user_repo_path(args.repo),
             skip_investigator=args.skip_investigator,
             fast_baseline=args.fast,
             require_auth=True,
@@ -405,6 +441,14 @@ def main(argv: list[str] | None = None) -> int:
             print_report=not args.no_report_print and not args.json,
         )
         return result.exit_code
+    if args.command == "verify":
+        from loadline.verify_cmd import verify_run
+
+        return verify_run(
+            args.run_dir,
+            open_pr=not args.no_pr,
+            allow_loadline_repo=args.i_am_patching_loadline,
+        )
     if args.command == "report" and args.report_cmd == "show":
         return report_show(args.run_dir, as_json=args.json, dashboard=args.dashboard)
     if args.command == "dashboard":

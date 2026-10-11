@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import yaml
 
 from loadline.adapters.runtime.docker_runner import docker_cmd, probe_image
+from loadline.core.hints import load_hints
 from loadline.discovery.intake import _find_openapi
 
 
@@ -183,6 +184,10 @@ def discover_workload_operations(
     else:
         candidates = _ops_from_openapi(spec, service, port, provenance)
     passing = [op for op in candidates if _smoke_operation(network, op)]
+    hints, _ = load_hints(repo / ".loadline.yaml")
+    if hints and hints.exclude_operations:
+        skip = set(hints.exclude_operations)
+        passing = [op for op in passing if op.id not in skip]
     return passing
 
 

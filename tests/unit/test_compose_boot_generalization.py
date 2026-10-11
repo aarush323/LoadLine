@@ -85,6 +85,27 @@ def test_health_path_candidates_include_healthz():
     assert _health_path_candidates("/health")[:3] == ["/health", "/healthz", "/readyz"]
 
 
+def test_infer_app_service_prefers_db_backed_app_over_downstream_stub():
+    compose = {
+        "services": {
+            "db": {"image": "postgres:16-alpine"},
+            "downstream": {
+                "build": ".",
+                "ports": ["9000:9000"],
+                "command": "uvicorn downstream.main:app --host 0.0.0.0 --port 9000",
+            },
+            "app": {
+                "build": ".",
+                "ports": ["8000:8000"],
+                "depends_on": {"db": {"condition": "service_healthy"}},
+            },
+            "prometheus": {"image": "prom/prometheus:v2.55.1", "ports": ["9090:9090"]},
+            "grafana": {"image": "grafana/grafana:11.3.0", "ports": ["3000:3000"]},
+        }
+    }
+    assert _infer_app_service(compose, None) == "app"
+
+
 def test_health_url_uses_command_port_when_no_healthcheck():
     svc = {"command": "uvicorn app.main:app --host 0.0.0.0 --port 8000"}
     port, path = _health_url("app", None, svc)

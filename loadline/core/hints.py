@@ -59,6 +59,21 @@ class LoadlineHints(BaseModel):
         return v
 
 
+DEFAULT_SLO_P95_MS = 2000.0
+DEFAULT_SLO_ERR_RATE = 0.05
+
+
+def slo_from_hints(repo: Path) -> tuple[float, float]:
+    hints, _ = load_hints(repo / ".loadline.yaml")
+    p95 = DEFAULT_SLO_P95_MS
+    err = DEFAULT_SLO_ERR_RATE
+    if hints is not None and hints.slo_p95_ms is not None:
+        p95 = float(hints.slo_p95_ms)
+    if hints is not None and hints.slo_err_rate is not None:
+        err = float(hints.slo_err_rate)
+    return p95, err
+
+
 def load_hints(path: Path) -> tuple[LoadlineHints | None, str | None]:
     if not path.is_file():
         return None, None

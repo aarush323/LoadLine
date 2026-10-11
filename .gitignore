@@ -33,3 +33,6 @@ integration/targets/
 .entire/logs/
 .entire/metadata/
 .entire/settings.local.json
+
+# Local Cursor plans (onboarding notes; do not commit)
+.cursor/plans/
