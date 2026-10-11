@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -350,6 +351,7 @@ def _graph_svg(
     op_p95: dict[str, float],
     exp_of: dict[str, str],
     worst_op: str | None,
+    select_op: str | None = None,
 ) -> str:
     nodes = graph["nodes"]
     edges = graph["edges"]
@@ -398,7 +400,7 @@ def _graph_svg(
             info = op_labels.get(op, {"method": "GET", "path": op})
             p95 = op_p95.get(op)
             sub = f"p95 {_ms(p95)} · measured" if p95 is not None else "measured wave · p95 not tagged"
-            selected = " selected" if op == worst_op else ""
+            selected = " selected" if op == (select_op or worst_op) else ""
             press = " api" if op == worst_op else " api"
             parts.append(
                 f'<g class="graph-node{press}{selected}" data-node="{nid}" tabindex="0" role="button" aria-label="{esc(info["method"] + " " + info["path"])}">'
@@ -442,6 +444,397 @@ def _metric(label: str, value: str, unit: str, foot: str, tag: str = "", hot: bo
     )
 
 
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            out.append(row)
+    return out
+
+
+def _load_experiments(run_dir: Path) -> list[dict[str, Any]]:
+    exp_dir = run_dir / "experiments"
+    if not exp_dir.is_dir():
+        return []
+    rows: list[dict[str, Any]] = []
+    try:
+        children = sorted(exp_dir.glob("*.json"))
+    except OSError:
+        return []
+    for child in children:
+        rec = _read_json(child)
+        if rec:
+            rows.append(rec)
+    return rows
+
+
+def _first_prose(md: str) -> str:
+    in_fence = False
+    for raw in md.splitlines():
+        line = raw.strip()
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence or not line:
+            continue
+        if line.startswith("#") or line.startswith("|") or line.startswith("- ") or line.startswith("* "):
+            continue
+        cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", line)
+        cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
+        return cleaned.strip()
+    return ""
+
+
+def _md_inline(text: str) -> str:
+    text = esc(text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    text = re.sub(
+        r"\[([^\]]+)\]\((https?://[^)\s]+)\)",
+        r'<a href="\2" rel="noopener noreferrer" target="_blank">\1</a>',
+        text,
+    )
+    return text
+
+
+def _looks_like_table(lines: list[str], i: int) -> bool:
+    if i + 1 >= len(lines):
+        return False
+    row, sep = lines[i].strip(), lines[i + 1].strip()
+    return row.startswith("|") and sep.startswith("|") and re.match(r"^\|?\s*:?-{3,}", sep) is not None
+
+
+def _md_table(lines: list[str], start: int) -> tuple[str, int]:
+    rows: list[list[str]] = []
+    i = start
+    while i < len(lines) and lines[i].strip().startswith("|"):
+        raw = lines[i].strip()
+        cells = [c.strip() for c in raw.strip("|").split("|")]
+        if i == start + 1 and all(re.match(r"^:?-{3,}:?$", c) for c in cells):
+            i += 1
+            continue
+        rows.append(cells)
+        i += 1
+    if not rows:
+        return "", start + 1
+    head, body = rows[0], rows[1:]
+    thead = "<tr>" + "".join(f"<th>{_md_inline(c)}</th>" for c in head) + "</tr>"
+    tbody = "".join("<tr>" + "".join(f"<td>{_md_inline(c)}</td>" for c in row) + "</tr>" for row in body)
+    return f"<table><thead>{thead}</thead><tbody>{tbody}</tbody></table>", i
+
+
+def _md_to_html(text: str) -> str:
+    if not text.strip():
+        return ""
+    pieces: list[tuple[str, str]] = []
+    pos = 0
+    for match in re.finditer(r"```[^\n]*\n([\s\S]*?)```", text):
+        if match.start() > pos:
+            pieces.append(("md", text[pos:match.start()]))
+        pieces.append(("code", match.group(1)))
+        pos = match.end()
+    if pos < len(text):
+        pieces.append(("md", text[pos:]))
+    html_out: list[str] = []
+    for kind, body in pieces:
+        if kind == "code":
+            html_out.append(f"<pre><code>{esc(body.rstrip())}</code></pre>")
+            continue
+        lines = body.splitlines()
+        i = 0
+        para: list[str] = []
+
+        def flush_para() -> None:
+            if para:
+                html_out.append("<p>" + _md_inline(" ".join(para)) + "</p>")
+                para.clear()
+
+        while i < len(lines):
+            raw = lines[i]
+            stripped = raw.strip()
+            if not stripped:
+                flush_para()
+                i += 1
+                continue
+            if stripped.startswith("#"):
+                flush_para()
+                hashes = len(stripped) - len(stripped.lstrip("#"))
+                level = min(max(hashes, 1), 3)
+                html_out.append(f"<h{level}>{_md_inline(stripped[hashes:].strip())}</h{level}>")
+                i += 1
+                continue
+            if _looks_like_table(lines, i):
+                flush_para()
+                table, i = _md_table(lines, i)
+                html_out.append(table)
+                continue
+            if stripped.startswith("- ") or stripped.startswith("* "):
+                flush_para()
+                items: list[str] = []
+                while i < len(lines) and (lines[i].strip().startswith("- ") or lines[i].strip().startswith("* ")):
+                    items.append(f"<li>{_md_inline(lines[i].strip()[2:])}</li>")
+                    i += 1
+                html_out.append("<ul>" + "".join(items) + "</ul>")
+                continue
+            para.append(stripped)
+            i += 1
+        flush_para()
+    return "".join(html_out)
+
+
+def _ratio(value: Any) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return "Not measured"
+
+
+def _rate(value: Any) -> str:
+    try:
+        return f"{float(value):.1f} req/s"
+    except (TypeError, ValueError):
+        return "Not measured"
+
+
+def _achieved(value: Any) -> str:
+    try:
+        return f"{float(value):.2f} req/s"
+    except (TypeError, ValueError):
+        return "Not measured"
+
+
+def _call_label(verif: dict[str, Any]) -> str:
+    ep = verif.get("endpoint") if isinstance(verif.get("endpoint"), dict) else {}
+    method = str(ep.get("method") or "GET").upper()
+    path = str(ep.get("path") or "").strip()
+    if path:
+        return f"{method} {path}"
+    return str(verif.get("operation_id") or "cited call")
+
+
+def _verdict_word(verdict: str) -> str:
+    return verdict.replace("_", " ")
+
+
+def _failed_verdict(verdict: str) -> bool:
+    return verdict in ("hypothesis_failed", "regressed_control")
+
+
+def _row_pair(label: str, before: str, after: str | None, *, after_col: bool) -> str:
+    after_cell = f"<td class=\"num\">{esc(after)}</td>" if after_col and after is not None else ""
+    return f"<tr><td>{esc(label)}</td><td class=\"num\">{esc(before)}</td>{after_cell}</tr>"
+
+
+def _verify_panel_html(verif: dict[str, Any] | None) -> str:
+    if not verif:
+        return ""
+    before = verif.get("before") if isinstance(verif.get("before"), dict) else {}
+    after = verif.get("after") if isinstance(verif.get("after"), dict) else None
+    ctrl_b = verif.get("control_before") if isinstance(verif.get("control_before"), dict) else {}
+    ctrl_a = verif.get("control_after") if isinstance(verif.get("control_after"), dict) else {}
+    after_col = isinstance(after, dict)
+    head_after = "<th>After</th>" if after_col else ""
+    call = _call_label(verif)
+    rate = _rate(verif.get("rate"))
+    duration = verif.get("duration_s")
+    dur = f"{int(duration)} s" if isinstance(duration, (int, float)) else "Not measured"
+    after_p95 = _ms(after.get("p95_ms")) if after_col else None
+    after_err = _ratio(after.get("error_rate")) if after_col else None
+    after_ach = _achieved(after.get("achieved_rps")) if after_col else None
+    after_ctrl = _ms(ctrl_a.get("p95_ms")) if after_col else None
+    after_exp = str(after.get("experiment_id") or "") if after_col else None
+    rows = "".join(
+        [
+            _row_pair("Experiment", str(verif.get("experiment_id") or "—"), after_exp, after_col=after_col),
+            _row_pair("Call", call, call if after_col else None, after_col=after_col),
+            _row_pair("Offered rate", rate, rate if after_col else None, after_col=after_col),
+            _row_pair("Duration", dur, dur if after_col else None, after_col=after_col),
+            _row_pair("p95", _ms(before.get("p95_ms")), after_p95, after_col=after_col),
+            _row_pair("Error rate", _ratio(before.get("error_rate")), after_err, after_col=after_col),
+            _row_pair("Achieved", _achieved(before.get("achieved_rps")), after_ach, after_col=after_col),
+            _row_pair("Control p95", _ms(ctrl_b.get("p95_ms")), after_ctrl, after_col=after_col),
+        ]
+    )
+    branch = str(verif.get("branch") or "").strip()
+    pr_url = str(verif.get("pr_url") or "").strip()
+    if pr_url.startswith("https://") or pr_url.startswith("http://"):
+        pr_html = f'<a class="pr-link" href="{esc(pr_url)}" rel="noopener noreferrer" target="_blank">{esc(pr_url)}</a>'
+    else:
+        pr_html = "No pull request."
+    foot_l = f"Branch {esc(branch)}" if branch else "Branch not recorded"
+    return (
+        '<section class="section verify-panel" id="verification">'
+        '<div class="section-head"><div><div class="section-title">Verification</div>'
+        '<div class="section-desc">Cited call, same offered rate, numbers copied from verification.json.</div></div></div>'
+        '<div class="panel"><div class="table-wrap"><table class="ops-table">'
+        f"<thead><tr><th></th><th>Before</th>{head_after}</tr></thead><tbody>{rows}</tbody></table></div>"
+        f'<div class="table-foot"><span>{foot_l}</span><span>{pr_html}</span></div></div></section>'
+    )
+
+
+def _blocker_panel_html(blocker: dict[str, Any] | None) -> str:
+    if not blocker:
+        return ""
+    summary = str(blocker.get("summary") or blocker.get("code") or "This run was blocked.")
+    security = "This was a security refusal." if blocker.get("security") is True else ""
+    return (
+        '<section class="section" id="blocked">'
+        '<div class="section-head"><div><div class="section-title">Blocked before measurement</div>'
+        '<div class="section-desc">The run stopped before load was applied.</div></div></div>'
+        f'<div class="panel" style="padding:18px 20px"><p class="hero-sub" style="margin:0">{esc(summary)}</p>'
+        + (f'<p class="hero-sub">{esc(security)}</p>' if security else "")
+        + "</div></section>"
+    )
+
+
+def _experiments_table_html(exps: list[dict[str, Any]], verif: dict[str, Any] | None) -> str:
+    if not exps:
+        return ""
+    before_id = str((verif or {}).get("experiment_id") or "")
+    after = (verif or {}).get("after") if isinstance((verif or {}).get("after"), dict) else {}
+    after_id = str(after.get("experiment_id") or "")
+    rows: list[str] = []
+    for rec in exps:
+        eid = str(rec.get("experiment_id") or "")
+        inp = rec.get("input") if isinstance(rec.get("input"), dict) else {}
+        out = rec.get("output") if isinstance(rec.get("output"), dict) else {}
+        eps = inp.get("endpoints") if isinstance(inp.get("endpoints"), list) else []
+        ep_txt = ", ".join(
+            f"{str(e.get('method') or 'GET').upper()} {e.get('path')}"
+            for e in eps
+            if isinstance(e, dict)
+        ) or "—"
+        rate = inp.get("rate", out.get("offered_rps"))
+        dur = inp.get("duration_s", out.get("duration_s"))
+        ops = out.get("operations") if isinstance(out.get("operations"), dict) else {}
+        p95s = " · ".join(
+            f"{oid} {_ms(row.get('p95_ms'))}"
+            for oid, row in ops.items()
+            if isinstance(row, dict) and row.get("p95_ms") is not None
+        ) or "—"
+        errs = " · ".join(
+            f"{oid} {float(row.get('error_rate') or 0):.1%}"
+            for oid, row in ops.items()
+            if isinstance(row, dict)
+        ) or "—"
+        dropped = out.get("dropped_iterations")
+        mark = ""
+        if eid and eid == before_id:
+            mark = '<span class="verify-mark before">BEFORE</span>'
+        elif eid and eid == after_id:
+            mark = '<span class="verify-mark after">AFTER</span>'
+        rows.append(
+            f"<tr><td class=\"mono\">{esc(eid or '—')}</td><td>{esc(ep_txt)}</td>"
+            f"<td class=\"num\">{esc(_rps(rate))}</td>"
+            f"<td class=\"num\">{esc(str(dur) + ' s') if dur is not None else '—'}</td>"
+            f"<td class=\"num\">{esc(p95s)}</td><td class=\"num\">{esc(errs)}</td>"
+            f"<td class=\"num\">{esc(dropped if dropped is not None else '—')}</td>"
+            f"<td>{mark}</td></tr>"
+        )
+    return (
+        '<div class="panel exp-table-wrap"><div class="table-wrap"><table class="ops-table">'
+        "<thead><tr><th>Experiment</th><th>Endpoints</th><th>Rate</th><th>Duration</th>"
+        "<th>p95</th><th>Error rate</th><th>Dropped</th><th></th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table></div></div>"
+    )
+
+
+def _hypothesis_html(md: str) -> str:
+    para = _first_prose(md)
+    if not para:
+        return ""
+    return (
+        '<p class="hypothesis-prose"><span class="label">Investigator hypothesis</span>'
+        f"{esc(para)}</p>"
+    )
+
+
+def _report_section_html(md: str) -> str:
+    if not md.strip():
+        return ""
+    return (
+        '<section class="section" id="report">'
+        '<div class="section-head"><div><div class="section-title">Report</div>'
+        '<div class="section-desc">Canonical write-up from report.md. Numbers in the verification panel come from verification.json.</div></div></div>'
+        f'<div class="panel report-md">{_md_to_html(md)}</div></section>'
+    )
+
+
+def _nav_report_html(has_report: bool) -> str:
+    if not has_report:
+        return ""
+    return (
+        '<a href="#report" data-nav="report" aria-label="Report">'
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">'
+        '<path d="M7 3.5h7l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V5a1.5 1.5 0 0 1 1-1.5Z"/>'
+        '<path d="M14 3.5V8h4M9 12h6M9 16h6"/></svg><span>Report</span></a>'
+    )
+
+
+def _snippet_html(repo_root: str, path: str, start: Any, end: Any, limit: int = 24) -> str:
+    repo = Path(repo_root) if repo_root else None
+    if repo is None or not repo.is_dir():
+        return '<p class="inspect-reads">The repository is not available.</p>'
+    try:
+        start_i = max(1, int(start))
+        end_i = max(start_i, int(end))
+    except (TypeError, ValueError):
+        return ""
+    target = (repo / path).resolve()
+    try:
+        if not str(target).startswith(str(repo.resolve())) or not target.is_file():
+            return '<p class="inspect-reads">The repository is not available.</p>'
+        lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return '<p class="inspect-reads">The repository is not available.</p>'
+    shown_end = min(end_i, start_i + limit - 1, len(lines))
+    chunk = "\n".join(lines[start_i - 1:shown_end])
+    header = f"{path}:{start_i}–{shown_end}"
+    return f'<pre class="inspect-snippet">{esc(header)}\n{esc(chunk)}</pre>'
+
+
+def _inspect_reads_html(
+    reads: list[dict[str, Any]],
+    patch_paths: list[str],
+    repo_root: str,
+) -> str:
+    cited = [p for p in patch_paths if p]
+    relevant = [r for r in reads if str(r.get("path") or "") in cited] if cited else []
+    if not relevant and not cited:
+        return ""
+    bits: list[str] = []
+    if relevant:
+        ranges = "<br>".join(
+            f"{esc(r.get('path'))}:{esc(r.get('start_line'))}–{esc(r.get('end_line'))}"
+            for r in relevant
+        )
+        bits.append(f'<div class="inspect-reads">{ranges}</div>')
+    if cited:
+        first = relevant[0] if relevant else None
+        if first is not None:
+            bits.append(
+                _snippet_html(
+                    repo_root,
+                    str(first.get("path") or cited[0]),
+                    first.get("start_line") or 1,
+                    first.get("end_line") or 1,
+                )
+            )
+        elif not repo_root or not Path(repo_root).is_dir():
+            bits.append('<p class="inspect-reads">The repository is not available.</p>')
+    return "".join(bits)
+
+
 def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) -> str:
     """Full single-file dashboard HTML; empty string when nothing to show."""
     run_dir = Path(run_dir)
@@ -450,7 +843,12 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
     ledger = _ledger_events(run_dir)
     waves = _waves(ledger)
     report = _read_json(run_dir / "report.json")
-    if report is None and not waves and not ledger:
+    attempts = _read_json(run_dir / "attempts.json")
+    blocker = attempts.get("blocker") if isinstance(attempts, dict) and isinstance(attempts.get("blocker"), dict) else None
+    verification = _read_json(run_dir / "verification.json")
+    reads = _read_jsonl(run_dir / "reads.jsonl")
+    experiments = _load_experiments(run_dir)
+    if report is None and not waves and not ledger and not blocker:
         return ""
     rid = run_id or (str(report.get("run_id")) if isinstance(report, dict) and report.get("run_id") else None) or run_dir.name
     profile = _read_json(run_dir / "profile.json") or {}
@@ -512,8 +910,12 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
             except (TypeError, ValueError):
                 pass
     worst_op = max(op_p95, key=lambda k: op_p95[k]) if op_p95 else (op_ids[0] if op_ids else None)
-    if worst_op is not None and worst_op in op_ids:
-        # The highest-pressure op must survive the 4-node graph cap below.
+    cited_op = str(verification.get("operation_id") or "").strip() if verification else ""
+    select_op = cited_op if cited_op and cited_op in op_ids else worst_op
+    if select_op is not None and select_op in op_ids:
+        # Cited (or highest-pressure) op must survive the 4-node graph cap below.
+        op_ids = [select_op] + [o for o in op_ids if o != select_op]
+    elif worst_op is not None and worst_op in op_ids:
         op_ids = [worst_op] + [o for o in op_ids if o != worst_op]
 
     state = ""
@@ -524,12 +926,36 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
             if e.get("kind") == "report_written":
                 state = str(e.get("run_state") or "")
                 break
+    if not state and blocker:
+        state = str(blocker.get("code") or "blocked")
     state = state or ("completed" if waves else "unknown")
-    state_label = {"completed": "Complete", "investigation_incomplete": "Investigation incomplete"}.get(state, state.replace("_", " ").title())
-    state_bad = state not in ("completed",)
+    verdict = str(verification.get("verdict") or "").strip() if verification else ""
+    if verdict:
+        state_label = _verdict_word(verdict).title() if "_" in verdict else verdict.replace("_", " ").title()
+        if verdict == "improved":
+            state_label = "Improved"
+        state_bad = _failed_verdict(verdict) or verdict not in ("improved",)
+        state_failed = _failed_verdict(verdict)
+    else:
+        state_label = {"completed": "Complete", "investigation_incomplete": "Investigation incomplete"}.get(state, state.replace("_", " ").title())
+        state_bad = state not in ("completed",)
+        state_failed = False
 
     # ---------------- hero ----------------
-    if waves and worst_op is not None:
+    if verdict:
+        call = _call_label(verification or {})
+        before = (verification or {}).get("before") if isinstance((verification or {}).get("before"), dict) else {}
+        after = (verification or {}).get("after") if isinstance((verification or {}).get("after"), dict) else None
+        cls = "verdict-bad" if state_failed else "verdict-ok"
+        hero_title = f"{esc(call)} <em class=\"{cls}\">{esc(_verdict_word(verdict))}</em>."
+        if isinstance(after, dict) and after.get("p95_ms") is not None:
+            hero_sub = (
+                f"p95 {_ms(before.get('p95_ms'))} → {_ms(after.get('p95_ms'))} at "
+                f"{_rps((verification or {}).get('rate'))} for {(verification or {}).get('duration_s')} s."
+            )
+        else:
+            hero_sub = f"Cited call {call} · after measurement was not recorded."
+    elif waves and worst_op is not None:
         winfo = op_labels.get(worst_op, {"method": "GET", "path": worst_op})
         first_p95 = worst_last_p95 = None
         for w in waves:
@@ -557,13 +983,26 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
             "SLO was not recorded for this run, so no breach is claimed."
         )
     else:
-        hero_title = "No load was measured on this run."
-        hero_sub = "The ledger holds no k6 waves. Interpret run state and coverage below."
+        hero_title = "This run did not reach measurement." if blocker else "No load was measured on this run."
+        hero_sub = (
+            str(blocker.get("summary") or blocker.get("code") or "The run stopped before load was applied.")
+            if blocker
+            else "The ledger holds no k6 waves. Interpret run state and coverage below."
+        )
+    pr_url = str((verification or {}).get("pr_url") or "").strip() if verification else ""
+    pr_chip = ""
+    if pr_url.startswith("https://") or pr_url.startswith("http://"):
+        pr_chip = (
+            f'<a class="meta-chip pr-link" href="{esc(pr_url)}" rel="noopener noreferrer" target="_blank">'
+            '<span class="dot"></span>PULL REQUEST</a>'
+        )
     chips = "".join(
         [_chip(f"RUN {rid}"), _chip(repo_name)]
         + ([_chip(f"COMMIT {sha}")] if sha else [])
         + ([_chip(f"{len(waves)} K6 WAVES")] if waves else [])
         + [_chip(state_label.upper())]
+        + ([_chip("NOT VERIFIED")] if not verification else [])
+        + ([pr_chip] if pr_chip else [])
     )
 
     # ---------------- metrics ----------------
@@ -579,7 +1018,25 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
         m1 = _metric("Peak offered load", "—", "", "<span>not measured</span>")
         m2 = _metric("Worst p95 latency", "—", "", "<span>not measured</span>")
         m3 = _metric("Dropped iterations", "—", "", "<span>not measured</span>")
-    if findings:
+    if verification and isinstance((verification or {}).get("before"), dict):
+        before = verification.get("before") or {}
+        after = verification.get("after") if isinstance(verification.get("after"), dict) else None
+        if after is not None and after.get("p95_ms") is not None:
+            try:
+                cited_val = f"{int(round(float(before.get('p95_ms'))))} → {int(round(float(after.get('p95_ms'))))}"
+            except (TypeError, ValueError):
+                cited_val = _ms(before.get("p95_ms")).replace(" ms", "")
+        else:
+            cited_val = _ms(before.get("p95_ms")).replace(" ms", "")
+        m4 = _metric(
+            "Cited p95",
+            cited_val,
+            "ms",
+            f"<span>{esc(_call_label(verification))} · {esc(_verdict_word(verdict))}</span>",
+            tag="VERIFIED",
+            hot=state_failed,
+        )
+    elif findings:
         m4 = _metric("Findings recorded", str(len(findings)), "", f"<span>{len(hypotheses)} hypotheses</span>", tag="RECORDED")
     else:
         m4 = _metric("Findings recorded", "none", "", "<span>measurements only</span>")
@@ -624,7 +1081,7 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
 
     # ---------------- graph ----------------
     graph = build_graph(run_dir, op_ids, op_labels, worst_op, hypotheses)
-    graph_svg = _graph_svg(graph, op_ids, op_labels, op_p95, exp_of, worst_op) if op_ids else '<div class="graph-canvas"><p class="muted small" style="padding:18px">No operations were load-tested on this run.</p></div>'
+    graph_svg = _graph_svg(graph, op_ids, op_labels, op_p95, exp_of, worst_op, select_op) if op_ids else '<div class="graph-canvas"><p class="muted small" style="padding:18px">No operations were load-tested on this run.</p></div>'
     node_data: dict[str, Any] = {}
     op_nodes: dict[str, str] = {}
     for i, op_id in enumerate(op_ids[:4]):
@@ -642,8 +1099,8 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
             "evidence": ev or "no experiment id",
             "relation": ("HANDLES_ROUTE · static" if h else "Unresolved"),
             "timing": "Operation measured",
-            "foot": "Measured operation · selected" if op_id == worst_op else "Measured operation",
-            "finding": (findings[0].get("symptom") or findings[0].get("mechanism") or "Finding recorded.") if findings else "No finding was recorded on this run.",
+            "foot": "Measured operation · selected" if op_id == select_op else "Measured operation",
+            "finding": (findings[0].get("symptom") or findings[0].get("mechanism") or "Finding recorded.") if findings else "",
             "explain": "Directly observed operation result. It does not attribute latency to neighbouring code nodes.",
             "hot": op_id == worst_op and op_id in op_p95,
         }
@@ -676,8 +1133,11 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
             "finding": str(hyp.get("claim", "recorded"))[:160],
             "explain": "An agent-authored conjecture, not a measured code relationship.",
         }
+    select_node = f"op_{op_ids[:4].index(select_op)}" if select_op in op_ids[:4] else None
     worst_node = f"op_{op_ids[:4].index(worst_op)}" if worst_op in op_ids[:4] else None
-    if worst_node is not None and worst_node in node_data:
+    if select_node is not None and select_node in node_data:
+        default_inspect = node_data[select_node]
+    elif worst_node is not None and worst_node in node_data:
         default_inspect = node_data[worst_node]
     elif node_data:
         default_inspect = next(iter(node_data.values()))
@@ -694,11 +1154,15 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
         finding_links = "".join(
             f'<span class="evidence-link">{esc(e)}</span>' for e in (f0.get("evidence_ids") or [])
         )
+        finding_block = (
+            f'<div class="finding-mini"><div class="finding-mini-top"><span>{esc(finding_id)}</span>'
+            f'<span>·</span><span>{esc(finding_state)}</span></div>'
+            f'<h4 id="inspect-finding">{esc(finding_title)}</h4>'
+            f'<p id="inspect-explainer">{esc(finding_body)}</p>'
+            f'<div class="finding-links">{finding_links}</div></div>'
+        )
     else:
-        finding_id, finding_state = "—", "none recorded"
-        finding_title = "No finding was recorded on this run."
-        finding_body = "The ledger holds measurements but no agent finding. Interpret the curves directly."
-        finding_links = "".join(f'<span class="evidence-link">{esc(w.get("experiment_id") or "")}</span>' for w in waves[:3])
+        finding_block = ""
     unmapped = sum(1 for i in range(min(len(op_ids), 4)) if f"op_{i}" not in graph["handlers"])
     nav_count = f'<span class="nav-count">{unmapped}</span>' if unmapped and not graph["unavailable"] else ""
 
@@ -723,8 +1187,9 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
         except (TypeError, ValueError):
             ach = 0.0
         is_worst = bool(ranked_latest) and idx == 0
+        is_active = (select_op is not None and op_id == select_op) or (select_op is None and idx == 0)
         ops_rows.append(
-            f'<tr class="{"active-row" if idx == 0 else ""}" data-op="{idx}" tabindex="0">'
+            f'<tr class="{"active-row" if is_active else ""}" data-op="{idx}" tabindex="0">'
             f"<td><div class=\"route-cell\"><span class=\"method\">{esc(info['method'])}</span>"
             f"<div><div class=\"route-name\">{esc(info['path'])}</div>"
             f"<div class=\"route-handler\">{esc(op_id)}</div></div></div></td>"
@@ -774,6 +1239,14 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
             trail.append((ts, "supported", "Finding recorded", str(e.get("symptom") or e.get("mechanism") or "recorded")[:220], "FINDING", "supported"))
         elif kind == "investigation_incomplete":
             trail.append((ts, "rejected", "Investigation stopped", str(e.get("reason", ""))[:220], "STOPPED", "rejected"))
+    if verification and verdict:
+        before = verification.get("before") if isinstance(verification.get("before"), dict) else {}
+        after = verification.get("after") if isinstance(verification.get("after"), dict) else None
+        if isinstance(after, dict) and after.get("p95_ms") is not None:
+            vdesc = f"{_verdict_word(verdict)} · p95 {_ms(before.get('p95_ms'))} → {_ms(after.get('p95_ms'))}"
+        else:
+            vdesc = _verdict_word(verdict)
+        trail.append(("—", "supported" if verdict == "improved" else "rejected", "Verification recorded", vdesc, "VERIFY", "supported" if verdict == "improved" else "rejected"))
     if not trail:
         trail_html = '<div class="trail-event"><div class="trail-time">—</div><div class="trail-rail"><i class="trail-dot"></i></div><div><div class="trail-title">No material events</div><div class="trail-desc">The ledger holds no hypothesis, wave, or finding events.</div></div><span class="trail-badge">EMPTY</span></div>'
     else:
@@ -815,6 +1288,28 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
             '<td class="mono">ledger.jsonl</td>'
             '<td><span class="mini-tag neutral">HYPOTHESIS</span></td></tr>'
         )
+    for rec in reads:
+        path = str(rec.get("path") or "")
+        start, end = rec.get("start_line"), rec.get("end_line")
+        eid = str(rec.get("evidence_id") or path or "read")
+        ev_rows.append(
+            f"<tr><td class=\"mono\">{esc(eid)}</td><td>File read</td>"
+            f"<td>{esc(path)}:{esc(start)}–{esc(end)}</td>"
+            '<td class="mono">reads.jsonl</td>'
+            '<td><span class="mini-tag neutral">READ</span></td></tr>'
+        )
+    if verification and verdict:
+        before = verification.get("before") if isinstance(verification.get("before"), dict) else {}
+        after = verification.get("after") if isinstance(verification.get("after"), dict) else None
+        obs = _verdict_word(verdict)
+        if isinstance(after, dict) and after.get("p95_ms") is not None:
+            obs = f"{obs} · {_ms(before.get('p95_ms'))} → {_ms(after.get('p95_ms'))}"
+        ev_rows.append(
+            f"<tr><td class=\"mono\">verification</td><td>Verify result</td>"
+            f"<td>{esc(obs)}</td>"
+            '<td class="mono">verification.json</td>'
+            '<td><span class="mini-tag green">VERIFIED</span></td></tr>'
+        )
     if not ev_rows:
         ev_rows.append('<tr><td colspan="5"><span class="map-state">No evidence rows on this run.</span></td></tr>')
 
@@ -844,6 +1339,9 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
         pass
     evidence_ids = [str(w.get("experiment_id")) for w in waves if w.get("experiment_id")]
     evidence_ids += [f"F-{n + 1:02d}" for n in range(len(findings))]
+    evidence_ids += [str(r.get("evidence_id") or r.get("path")) for r in reads if r.get("evidence_id") or r.get("path")]
+    if verification:
+        evidence_ids.append("verification")
     boot = {
         "runId": rid,
         "graphNodes": node_data,
@@ -866,17 +1364,23 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
     out = tpl
     out = out.replace("__PAGE_TITLE__", esc(f"Loadline — {repo_name} · {rid}"))
     out = out.replace("__CRUMB_RUN__", esc(rid.upper()[:7] if len(rid) > 7 else rid))
-    out = out.replace("__STATE_PILL__",
-                      f"<i class=\"state-dot\"></i> {esc(state_label)}" if not state_bad
-                      else f"<span class=\"state bad\"><i class=\"state-dot\"></i> {esc(state_label)}</span>")
+    state_cls = "state bad" if state_bad else "state"
+    out = out.replace(
+        "__STATE_PILL__",
+        f'<span class="{state_cls}"><i class="state-dot"></i> {esc(state_label)}</span>',
+    )
     out = out.replace("__REPO_NAME__", esc(repo_name))
     out = out.replace("__REPO_META__", esc(f"{repo_root} · {sha or 'no sha'}"))
     out = out.replace("__NAV_COUNT__", nav_count)
+    out = out.replace("__NAV_REPORT__", _nav_report_html(bool(md_text.strip())))
     out = out.replace("__HERO_EYEBROW__", esc(f"Run · {_fmt_date(first_ts)} · {repo_name}"))
     out = out.replace("__HERO_TITLE__", hero_title)
     out = out.replace("__HERO_SUB__", esc(hero_sub))
+    out = out.replace("__HYPOTHESIS__", _hypothesis_html(md_text))
     out = out.replace("__META_CHIPS__", chips)
     out = out.replace("__METRICS__", metrics)
+    out = out.replace("__VERIFY_PANEL__", _verify_panel_html(verification) or _blocker_panel_html(blocker))
+    out = out.replace("__PRESSURE_VIS__", "" if waves else " hidden")
     out = out.replace("__CHART_NOTE__", esc(chart_note))
     out = out.replace("__CHART_KEY__", chart_key)
     out = out.replace("__CHART_OFFERED_SVG__", offered_svg)
@@ -890,26 +1394,39 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
     out = out.replace("__INSPECT_KIND__", esc(default_inspect.get("kind", "")))
     out = out.replace("__INSPECT_TITLE__", esc(default_inspect.get("title", "")))
     out = out.replace("__INSPECT_SOURCE__", esc(default_inspect.get("source", "")))
-    facts = "".join(
-        f'<div class="fact"><span>{label}</span><strong{" class=\"hot\"" if hot_key and default_inspect.get(hot_key) not in (None, "Not measured") and hot else ""}>{esc(default_inspect.get(key, ""))}</strong></div>'
-        for label, key, hot_key, hot in (
-            ("Operation p95 at peak", "p95", "hot", bool(default_inspect.get("hot"))),
-            ("Evidence anchors", "evidence", None, False),
-        )
+    facts = (
+        f'<div class="fact"><span>Operation p95 at peak</span>'
+        f'<strong id="inspect-p95"{" class=\"hot\"" if default_inspect.get("hot") else ""}>'
+        f'{esc(default_inspect.get("p95", ""))}</strong></div>'
+        f'<div class="fact"><span>Evidence anchors</span>'
+        f'<strong id="inspect-evidence">{esc(default_inspect.get("evidence", ""))}</strong></div>'
+        f'<div class="fact hidden"><span>DB</span><strong id="inspect-db">Not measured</strong></div>'
     )
+    patch_paths = []
+    if verification and isinstance(verification.get("patch_paths"), list):
+        patch_paths = [str(p) for p in verification.get("patch_paths") or [] if p]
     out = out.replace("__INSPECT_FACTS__", facts)
-    out = out.replace("__FINDING_ID__", esc(finding_id))
-    out = out.replace("__FINDING_STATE__", esc(finding_state))
-    out = out.replace("__FINDING_TITLE__", esc(finding_title))
-    out = out.replace("__FINDING_BODY__", esc(finding_body))
-    out = out.replace("__FINDING_LINKS__", finding_links)
+    out = out.replace("__INSPECT_READS__", _inspect_reads_html(reads, patch_paths, repo_root))
+    out = out.replace("__FINDING_BLOCK__", finding_block)
     out = out.replace("__INSPECT_RELATION__", esc(default_inspect.get("relation", "")))
     out = out.replace("__INSPECT_TIMING__", esc(default_inspect.get("timing", "")))
     out = out.replace("__INSPECT_FOOT__", esc(default_inspect.get("foot", "")))
+    out = out.replace(
+        "__FIT_GRAPH_BTN__",
+        '<button class="text-action" id="fit-graph">Fit graph <span>↗</span></button>' if op_ids else "",
+    )
+    out = out.replace(
+        "__ALL_OPS_BTN__",
+        '<button class="text-action" id="all-operations">All operations <span>↗</span></button>'
+        if len(ranked_latest) > 4
+        else "",
+    )
     out = out.replace("__OPS_ROWS__", "".join(ops_rows))
     out = out.replace("__OPS_FOOT_L__", esc(ops_foot))
+    out = out.replace("__EXP_TABLE__", _experiments_table_html(experiments, verification))
     out = out.replace("__TRAIL_EVENTS__", trail_html)
     out = out.replace("__EVIDENCE_ROWS__", "".join(ev_rows))
+    out = out.replace("__REPORT_SECTION__", _report_section_html(md_text))
     out = out.replace("__ENV_ROWS__", env_rows)
     out = out.replace(
         "__FOOTER_STATS__",

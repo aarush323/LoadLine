@@ -19,6 +19,7 @@ class RunSummary:
     peak_rps: float | None
     waves: int
     dropped: int
+    verification_verdict: str | None = None
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -80,17 +81,44 @@ def _state_waves_peak(run_dir: Path) -> tuple[str, int, float | None, int]:
     return state or "unknown", waves, peak, dropped
 
 
+def _verification_verdict(run_dir: Path) -> str | None:
+    data = _read_json(run_dir / "verification.json")
+    if not data:
+        return None
+    verdict = data.get("verdict")
+    return str(verdict) if verdict else None
+
+
+def _blocker_state(run_dir: Path) -> str | None:
+    data = _read_json(run_dir / "attempts.json")
+    if not data:
+        return None
+    blocker = data.get("blocker") if isinstance(data.get("blocker"), dict) else None
+    if not blocker:
+        return "blocked"
+    return str(blocker.get("code") or "blocked")
+
+
 def summarize_run(run_dir: Path) -> RunSummary | None:
     """Return None when the directory holds no recognizable run evidence."""
     try:
         if not run_dir.is_dir():
             return None
-        if not (run_dir / "ledger.jsonl").is_file() and not (run_dir / "report.json").is_file():
+        has_ledger = (run_dir / "ledger.jsonl").is_file()
+        has_report = (run_dir / "report.json").is_file()
+        has_attempts = (run_dir / "attempts.json").is_file()
+        if not has_ledger and not has_report and not has_attempts:
             return None
         try:
             mtime = max(
                 (run_dir / name).stat().st_mtime
-                for name in ("ledger.jsonl", "report.json", "report.md")
+                for name in (
+                    "ledger.jsonl",
+                    "report.json",
+                    "report.md",
+                    "verification.json",
+                    "attempts.json",
+                )
                 if (run_dir / name).is_file()
             )
         except OSError:
@@ -100,6 +128,8 @@ def summarize_run(run_dir: Path) -> RunSummary | None:
                 mtime = 0.0
         repo_name, repo_root = _repo_from_profile(run_dir)
         state, waves, peak, dropped = _state_waves_peak(run_dir)
+        if state in ("", "unknown") and has_attempts and not has_ledger:
+            state = _blocker_state(run_dir) or "blocked"
         return RunSummary(
             run_id=run_dir.name,
             run_dir=run_dir,
@@ -110,6 +140,7 @@ def summarize_run(run_dir: Path) -> RunSummary | None:
             peak_rps=peak,
             waves=waves,
             dropped=dropped,
+            verification_verdict=_verification_verdict(run_dir),
         )
     except Exception:
         return None

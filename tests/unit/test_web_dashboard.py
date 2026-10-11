@@ -128,3 +128,138 @@ def test_dashboard_export_flag(tmp_path: Path, capsys, monkeypatch):
     assert main(["dashboard", "--run", "aaa", "--export", str(out)]) == 0
     assert "exp-k6-0002" in out.read_text()
     assert main(["dashboard", "--export", str(out)]) == 2
+
+
+def _write_verification(run_dir: Path, **fields: object) -> None:
+    doc = {
+        "schema_version": "loadline-verification/1",
+        "source_run_id": run_dir.name,
+        "experiment_id": "exp-k6-0002",
+        "operation_id": "widget",
+        "control_operation_id": "health",
+        "metric": "p95_ms",
+        "direction": "decrease",
+        "rate": 20.0,
+        "duration_s": 30,
+        "endpoint": {"method": "GET", "path": "/widgets/1"},
+        "before": {"experiment_id": "exp-k6-0002", "p95_ms": 5774, "error_rate": 0.03, "achieved_rps": 14.2},
+        "after": {"experiment_id": "exp-k6-verify-0002", "p95_ms": 900, "error_rate": 0.0, "achieved_rps": 19.1},
+        "control_before": {"p95_ms": 5.0, "error_rate": 0.0, "achieved_rps": 4.0},
+        "control_after": {"p95_ms": 4.5, "error_rate": 0.0, "achieved_rps": 4.0},
+        "verdict": "hypothesis_failed",
+        "pr_opened": False,
+        "pr_url": "",
+        "branch": "loadline/verify-aaa111",
+        "patch_paths": ["app/main.py"],
+    }
+    doc.update(fields)
+    (run_dir / "verification.json").write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
+def test_run_page_hypothesis_failed_shows_both_p95_and_no_pr(tmp_path: Path):
+    run_dir = _make_run(tmp_path / "runs", "fail111")
+    _write_verification(run_dir, verdict="hypothesis_failed", pr_opened=False, pr_url="")
+    page = render_run_page(run_dir, "fail111")
+    assert page
+    assert "5774" in page and "900" in page
+    assert "No pull request." in page
+    assert "hypothesis failed" in page.lower()
+    assert 'id="verification"' in page
+
+
+def test_run_page_without_verification_does_not_invent_after(tmp_path: Path):
+    run_dir = _make_run(tmp_path / "runs", "aaa111")
+    page = render_run_page(run_dir, "aaa111")
+    assert page
+    assert "Not verified" in page or "NOT VERIFIED" in page
+    assert 'id="verification"' not in page
+    assert "No pull request." not in page
+    assert "Cited p95" not in page
+
+
+def test_k6_only_ledger_has_no_hypothesis_placeholder(tmp_path: Path):
+    run_dir = tmp_path / "runs" / "k6only"
+    run_dir.mkdir(parents=True)
+    (run_dir / "profile.json").write_text(json.dumps({"root": "/nonexistent/repo-xyz"}))
+    (run_dir / "ledger.jsonl").write_text(json.dumps(
+        {"seq": 1, "kind": "k6_run", "evidence_ids": ["exp-k6-0001"],
+         "experiment_id": "exp-k6-0001", "wave": "agent-k6-1",
+         "plan": {"mix": [{"op": {"id": "widget", "selector": {"method": "GET", "path": "/x"}}}]},
+         "result": {"offered_rps": 5.0, "dropped_iterations": 0,
+                    "operations": {"widget": {"p95_ms": 40, "error_count": 0, "error_rate": 0.0,
+                                             "offered_rps": 5.0, "achieved_rps": 5.0}}}}
+    ) + "\n")
+    (run_dir / "report.json").write_text(json.dumps({"run_id": "k6only", "run_state": "completed"}))
+    (run_dir / "report.md").write_text("## Verdict\n\nThe endpoint waits on a pool.\n")
+    page = render_run_page(run_dir, "k6only")
+    assert page
+    assert "H-01" not in page
+    assert "No finding was recorded" not in page
+    assert "The endpoint waits on a pool." in page
+
+
+def test_report_markdown_table_renders(tmp_path: Path):
+    run_dir = _make_run(tmp_path / "runs", "mdtbl")
+    (run_dir / "report.md").write_text(
+        "## Verification\n\n"
+        "| | Before | After |\n"
+        "|---|---|---|\n"
+        "| p95 | 5710 ms | 1423 ms |\n"
+    )
+    page = render_run_page(run_dir, "mdtbl")
+    assert page
+    assert "<table>" in page
+    assert "5710 ms" in page and "1423 ms" in page
+    assert 'id="report"' in page
+
+
+def test_index_shows_verdict_on_verified_row_only(tmp_path: Path):
+    import urllib.error
+
+    verified = _make_run(tmp_path / "runs", "ver111")
+    _write_verification(verified, verdict="improved", pr_opened=True,
+                        pr_url="https://example.invalid/pull/1")
+    _make_run(tmp_path / "runs", "plain22")
+    server = _serve_tmp(tmp_path)
+    try:
+        port = server.server_address[1]
+        code, body = _get(port, "/")
+        assert code == 200
+        assert "ver111" in body and "plain22" in body
+        assert "improved" in body
+        assert body.count("not verified") >= 1
+        code, body = _get(port, "/?repo=repo-xyz")
+        assert code == 200 and "ver111" in body
+        code, body = _get(port, "/?repo=no-such-repo")
+        assert code == 200 and "No runs match" in body
+        code, body = _get(port, "/api/runs")
+        assert code == 200
+        payload = json.loads(body)
+        by_id = {row["run_id"]: row for row in payload}
+        assert by_id["ver111"]["verification_verdict"] == "improved"
+        assert by_id["plain22"]["verification_verdict"] is None
+    finally:
+        server.shutdown()
+
+
+def test_blocked_run_renders_without_chart_or_docker_sock(tmp_path: Path):
+    run_dir = tmp_path / "runs" / "blocked1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "profile.json").write_text(json.dumps({"root": "/nonexistent/repo-xyz"}))
+    (run_dir / "attempts.json").write_text(json.dumps({
+        "attempts": [{"n": 1, "signature": "compose", "result": "blocked"}],
+        "blocker": {
+            "code": "policy_refused",
+            "summary": "host docker socket is not allowed",
+            "security": True,
+            "remediation": ["bind-mount docker.sock into the sandbox"],
+        },
+    }))
+    page = render_run_page(run_dir, "blocked1")
+    assert page
+    assert "did not reach measurement" in page.lower()
+    assert "host docker socket is not allowed" in page
+    assert "security refusal" in page.lower()
+    assert "docker.sock" not in page
+    assert '<svg class="chart-svg"' not in page
+    assert 'id="pressure"' in page and "section hidden" in page
