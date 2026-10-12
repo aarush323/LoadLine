@@ -1,0 +1,216 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M4RCZVDPNEAWQ65F4Q9DB762",
+  "session_id": "7973e432-ae2d-460a-9ca5-8fe239d3a8d7",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-12T15:51:43.805567577Z",
+  "branch": "feature/website",
+  "checkpoints_count": 18,
+  "save_step_count": 7,
+  "files_touched": [
+    "README.md",
+    "top.txt",
+    "website/.gitignore",
+    "website/.npmrc",
+    "website/README.md",
+    "website/components.json",
+    "website/index.html",
+    "website/package-lock.json",
+    "website/package.json",
+    "website/public/favicon.svg",
+    "website/scripts/check-datums.mjs",
+    "website/scripts/check-lane.mjs",
+    "website/scripts/layout-graph.mjs",
+    "website/src/App.tsx",
+    "website/src/components/BrandMark.tsx",
+    "website/src/components/Close.tsx",
+    "website/src/components/CopyCodeButton.tsx",
+    "website/src/components/LandingNav.tsx",
+    "website/src/components/LoadlineMark.tsx",
+    "website/src/components/Quickstart.tsx",
+    "website/src/components/SafetyBand.tsx",
+    "website/src/components/repo.ts",
+    "website/src/components/ui/hero-ascii-one.tsx",
+    "website/src/data/graph-layout.json",
+    "website/src/data/investigation.json",
+    "website/src/data/sample-run.json",
+    "website/src/index.css",
+    "website/src/lib/laneModel.d.mts",
+    "website/src/lib/laneModel.mjs",
+    "website/src/lib/sample.ts",
+    "website/src/lib/tier.ts",
+    "website/src/lib/utils.ts",
+    "website/src/main.tsx",
+    "website/src/styles/hero-ascii.css",
+    "website/src/styles/landing.css",
+    "website/src/styles/tokens.css",
+    "website/src/vite-env.d.ts",
+    "website/tsconfig.json",
+    "website/tsconfig.node.json",
+    "website/vercel.json",
+    "website/vite.config.ts"
+  ],
+  "agent": "Cursor",
+  "model": "composer-2.5",
+  "turn_id": "1943d7273093",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 548013,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 3772263,
+    "output_tokens": 61182,
+    "api_call_count": 6
+  },
+  "session_metrics": {
+    "turn_count": 18,
+    "context_tokens": 186094,
+    "context_window_size": 200000
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-12T15:51:43.557144853Z",
+    "agent_lines": 2405,
+    "agent_removed": 0,
+    "human_added": 6725,
+    "human_modified": 228,
+    "human_removed": 0,
+    "total_committed": 9357,
+    "total_lines_changed": 9358,
+    "agent_percentage": 25.69993588373584,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 1454,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".cursor/plans/adapt_onboarding_setup_4f579a01.plan.md": 607,
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316,
+        "top.txt": 531
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 923,
+      "user_lines_removed": 0,
+      "agent_lines_added": 4308,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".cursor/plans/adapt_onboarding_setup_4f579a01.plan.md": 607,
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 923,
+      "user_lines_removed": 0,
+      "agent_lines_added": 4308,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".cursor/plans/adapt_onboarding_setup_4f579a01.plan.md": 607,
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 3366,
+      "user_lines_removed": 228,
+      "agent_lines_added": 3642,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".cursor/plans/adapt_onboarding_setup_4f579a01.plan.md": 607,
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316,
+        "website/package-lock.json": 96,
+        "website/package.json": 7,
+        "website/scripts/check-datums.mjs": 54,
+        "website/scripts/check-lane.mjs": 10,
+        "website/scripts/layout-graph.mjs": 14,
+        "website/src/App.tsx": 59,
+        "website/src/components/AscentRail.tsx": 53,
+        "website/src/components/Close.tsx": 38,
+        "website/src/components/Datum.tsx": 31,
+        "website/src/components/Investigation.tsx": 295,
+        "website/src/components/PressureInstrument.tsx": 193,
+        "website/src/components/Quickstart.tsx": 77,
+        "website/src/components/ReportSheet.tsx": 75,
+        "website/src/components/SafetyBand.tsx": 16,
+        "website/src/components/SiteNav.tsx": 3,
+        "website/src/components/Story.tsx": 51,
+        "website/src/components/WorldCanvas.tsx": 65,
+        "website/src/components/WorldPoster.tsx": 56,
+        "website/src/components/repo.ts": 1,
+        "website/src/data/graph-layout.json": 44,
+        "website/src/data/investigation.json": 60,
+        "website/src/data/sample-run.json": 102,
+        "website/src/lib/laneModel.d.mts": 8,
+        "website/src/lib/laneModel.mjs": 80,
+        "website/src/lib/sample.ts": 41,
+        "website/src/lib/tier.ts": 22,
+        "website/src/main.tsx": 6,
+        "website/src/scene/world.ts": 295,
+        "website/src/state/run.tsx": 31,
+        "website/src/styles/landing.css": 546,
+        "website/src/vite-env.d.ts": 13,
+        "website/tsconfig.json": 1
+      },
+      "user_removed_per_file": {
+        "website/index.html": 6,
+        "website/package-lock.json": 1,
+        "website/package.json": 2,
+        "website/src/App.tsx": 22,
+        "website/src/components/SiteNav.tsx": 3,
+        "website/src/styles/landing.css": 194
+      }
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 6,
+      "user_lines_added": 923,
+      "user_lines_removed": 0,
+      "agent_lines_added": 4421,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".cursor/plans/adapt_onboarding_setup_4f579a01.plan.md": 607,
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316
+      }
+    },
+    {
+      "checkpoint_number": 7,
+      "user_lines_added": 963,
+      "user_lines_removed": 1,
+      "agent_lines_added": 4543,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".cursor/plans/adapt_onboarding_setup_4f579a01.plan.md": 607,
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316,
+        "website/package-lock.json": 40
+      },
+      "user_removed_per_file": {
+        "website/package-lock.json": 1
+      }
+    },
+    {
+      "checkpoint_number": 8,
+      "user_lines_added": 963,
+      "user_lines_removed": 1,
+      "agent_lines_added": 4538,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".cursor/plans/adapt_onboarding_setup_4f579a01.plan.md": 607,
+        ".cursor/plans/setup_config_design_cd9282e9.plan.md": 316,
+        "website/package-lock.json": 40
+      },
+      "user_removed_per_file": {
+        "website/package-lock.json": 1
+      }
+    }
+  ]
+}
