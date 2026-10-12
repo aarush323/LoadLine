@@ -1,0 +1,22 @@
+:root {
+  --void: #070908;
+  --ink: #141614;
+  --ink-soft: #3a4038;
+  --paper: #f4f1e8;
+  --paper-raised: #fbf9f4;
+  --line: rgba(20, 22, 20, 0.1);
+
+  --hero-copy: #f2f0e8;
+  --hero-muted: #a8aea4;
+
+  --signal: #c7ff70;
+  --signal-ink: #0c0e0a;
+
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-serif: "Instrument Serif", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --content-width: 1180px;
+  --nav-height: 72px;
+  --radius: 14px;
+}

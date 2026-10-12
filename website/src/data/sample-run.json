@@ -1,0 +1,102 @@
+{
+  "banner": "RECORDED RUN · DEMO APP WITH A PLANTED FAULT · NOT YOUR APP",
+  "target": {
+    "name": "unreliable-blind",
+    "kind": "demo app with a planted fault"
+  },
+  "code": {
+    "pool_size": 5,
+    "pool_timeout_s": 5.0,
+    "hold_s": 0.55,
+    "downstream_ms": [300, 800],
+    "evidence": {
+      "pool": "app/db.py:25-31",
+      "handler": "app/main.py:70",
+      "branch": "app/main.py:98-105",
+      "acquire": "app/db.py:37-60",
+      "downstream": "app/downstream.py:17-33",
+      "compute": "downstream /compute"
+    }
+  },
+  "waves": [
+    {
+      "id": "w1",
+      "duration_s": 20,
+      "ops": [
+        {
+          "id": "widget",
+          "method": "GET",
+          "path": "/widgets/{id}",
+          "offered_rps": 5,
+          "achieved_rps": 5.0,
+          "count": 101,
+          "p50_ms": 541,
+          "p95_ms": 816,
+          "dropped": 0,
+          "vus_max": 4,
+          "vu_ceiling": 50
+        }
+      ]
+    },
+    {
+      "id": "w2",
+      "ops": [
+        {
+          "id": "widget",
+          "method": "GET",
+          "path": "/widgets/{id}",
+          "offered_rps": 10,
+          "p50_ms": 3022,
+          "p95_ms": 5529,
+          "dropped": 1,
+          "vus_max": 48,
+          "vu_ceiling": 50
+        }
+      ]
+    },
+    {
+      "id": "w3",
+      "ops": [
+        {
+          "id": "widget",
+          "method": "GET",
+          "path": "/widgets/{id}",
+          "offered_rps": 12,
+          "p50_ms": 5004,
+          "p95_ms": 5641,
+          "dropped": 32,
+          "vus_max": 50,
+          "vu_ceiling": 50
+        }
+      ]
+    },
+    {
+      "id": "w4",
+      "ops": [
+        {
+          "id": "widget",
+          "method": "GET",
+          "path": "/widgets/{id}",
+          "offered_rps": 20,
+          "p50_ms": 5214,
+          "p95_ms": 5706,
+          "dropped": 282,
+          "vus_max": 50,
+          "vu_ceiling": 50
+        }
+      ]
+    }
+  ],
+  "mixed": {
+    "readyz_ms": 1003,
+    "healthz_ms": 1
+  },
+  "prediction": {
+    "capacity_rps": 9,
+    "basis": "pool / hold"
+  },
+  "knee": {
+    "low_rps": 5,
+    "high_rps": 10
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "steps": [
+    {
+      "id": "read-pool",
+      "phase": "READ",
+      "tool": "read_file",
+      "lane": "code",
+      "summary": "Read the connection pool and its timeout.",
+      "lights": ["pool"]
+    },
+    {
+      "id": "read-handler",
+      "phase": "READ",
+      "tool": "read_file",
+      "lane": "code",
+      "summary": "Read the widget handler and the downstream call.",
+      "lights": ["handler", "branch", "downstream"]
+    },
+    {
+      "id": "search",
+      "phase": "READ",
+      "tool": "repo",
+      "lane": "code",
+      "summary": "Searched the repository for the route and its callers.",
+      "lights": ["handler"]
+    },
+    {
+      "id": "predict",
+      "phase": "PREDICT",
+      "tool": "repo",
+      "lane": "code",
+      "summary": "Estimated capacity from pool size divided by hold time.",
+      "lights": ["pool"]
+    },
+    {
+      "id": "load",
+      "phase": "LOAD",
+      "tool": "run_k6",
+      "lane": "load",
+      "summary": "Raised offered rate on the widget route and watched the curve.",
+      "lights": ["op"]
+    },
+    {
+      "id": "explain",
+      "phase": "EXPLAIN",
+      "tool": "read_file",
+      "lane": "code",
+      "summary": "Set the measured knee next to the code that was read.",
+      "lights": ["op", "pool"]
+    },
+    {
+      "id": "limits",
+      "phase": "LIMITS",
+      "tool": "",
+      "lane": "code",
+      "summary": "Listed what this run did not measure. A miss stays a miss.",
+      "lights": ["other"]
+    }
+  ]
+}

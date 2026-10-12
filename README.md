@@ -22,6 +22,8 @@ uv run loadline doctor --check-model && uv run loadline doctor --cleanup
 
 `run` does **not** call `load`. You run `load` yourself when you want a saved config before a full run.
 
+**Marketing site:** static landing page in [`website/`](website/) (Vercel root = `website`). See [website/README.md](website/README.md).
+
 **Primary integration target (blind):** `integration/targets/unreliable-blind` — see [setup.md](setup.md) §5.
 
 ---
@@ -172,6 +174,7 @@ Loadline does **not** let the model write free-form k6 scripts. The agent only p
 | Investigator | `loadline/investigator/` |
 | k6 compile/run | `loadline/adapters/generator/` |
 | Dashboard UI | `loadline/ui/`, `loadline/dashboard/` |
+| Marketing site (Vercel) | `website/` |
 | Product summary | `mvp.md` |
 
 **Partners (hackathon):** Entire (code graph for `repo`), neatlogs (optional tracing), cfo.ai (business plan only).

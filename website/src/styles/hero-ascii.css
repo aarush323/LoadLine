@@ -1,0 +1,117 @@
+.hero-ascii-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.55) 42%, rgba(0, 0, 0, 0.2) 100%);
+  pointer-events: none;
+}
+
+.frame-corner {
+  position: absolute;
+  z-index: 20;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-color: rgba(255, 255, 255, 0.28);
+  border-style: solid;
+  pointer-events: none;
+}
+
+.frame-tl { top: 4.5rem; left: 1rem; border-width: 2px 0 0 2px; }
+.frame-tr { top: 4.5rem; right: 1rem; border-width: 2px 2px 0 0; }
+.frame-bl { bottom: 10vh; left: 1rem; border-width: 0 0 2px 2px; }
+.frame-br { bottom: 10vh; right: 1rem; border-width: 0 2px 2px 0; }
+
+@media (min-width: 1024px) {
+  .frame-tl, .frame-tr { top: 5.5rem; left: max(1rem, calc((100vw - 1180px) / 2)); }
+  .frame-tr { left: auto; right: max(1rem, calc((100vw - 1180px) / 2)); }
+  .frame-bl { left: max(1rem, calc((100vw - 1180px) / 2)); }
+  .frame-br { right: max(1rem, calc((100vw - 1180px) / 2)); }
+}
+
+.hero-product {
+  position: relative;
+}
+
+.hero-product-tag {
+  margin: 1.25rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.hero-product-headline {
+  margin: 1rem 0 0;
+  font-size: clamp(2rem, 4.5vw, 3.25rem);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: #fff;
+  max-width: 16ch;
+}
+
+.hero-product-headline em {
+  display: block;
+  margin-top: 0.2em;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 400;
+  color: #c7ff70;
+}
+
+.hero-product-lead {
+  margin: 1.35rem 0 0;
+  max-width: 32rem;
+  font-size: 1.05rem;
+  line-height: 1.65;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.hero-product-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+
+.hero-ascii-footer {
+  position: absolute;
+  right: 0;
+  bottom: 5vh;
+  left: 0;
+  z-index: 20;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  padding: 0.65rem 0;
+}
+
+.ascii-dither {
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0, transparent 1px, white 1px, white 2px),
+    repeating-linear-gradient(90deg, transparent 0, transparent 1px, white 1px, white 2px);
+  background-size: 3px 3px;
+}
+
+.ascii-stars {
+  background-image:
+    radial-gradient(1px 1px at 20% 30%, white, transparent),
+    radial-gradient(1px 1px at 60% 70%, white, transparent),
+    radial-gradient(1px 1px at 50% 50%, white, transparent),
+    radial-gradient(1px 1px at 80% 10%, white, transparent);
+  background-size: 200% 200%, 180% 180%, 250% 250%, 220% 220%;
+  opacity: 0.28;
+}
+
+[data-us-project] {
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+[data-us-project] canvas {
+  clip-path: inset(0 0 8% 0) !important;
+}
+
+[data-us-project] * {
+  pointer-events: none !important;
+}
