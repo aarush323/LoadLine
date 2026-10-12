@@ -361,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
     run_p.add_argument(
         "--fast",
         action="store_true",
-        help="Short baseline warmup/measure durations (harness and integration tests).",
+        help="Shorter investigator load: lower max rate, fewer run_k6 calls, 15s measure cap.",
     )
     run_p.add_argument("--json", action="store_true", help="Emit one JSON object on stdout at end.")
     run_p.add_argument("--quiet", action="store_true", help="Errors only on stderr; hides investigate tool trace.")
@@ -465,6 +465,10 @@ def main(argv: list[str] | None = None) -> int:
         from loadline.skills.commands import main_skills
 
         return main_skills(args.skills_args or ["status"])
+    if args.command is None and is_tty(sys.stdin) and is_tty(sys.stdout):
+        from loadline.ui.workspace import run_workspace
+
+        return run_workspace(normalize=normalize_user_repo_path)
     parser.print_help()
     return 2
 

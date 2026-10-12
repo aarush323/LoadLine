@@ -137,3 +137,31 @@ def test_validate_endpoint_rejects_path_templates():
 def test_run_k6_input_accepts_endpoints():
     payload = RunK6Input(endpoints=[EndpointSpec(id="h", path="/health")], rate=2, duration_s=5)
     assert payload.endpoints[0].path == "/health"
+
+
+def test_run_k6_rejects_when_wave_limit_reached(tmp_path: Path):
+    from loadline.investigator.k6_tool import run_k6
+
+    ctx = _ctx(tmp_path)
+    ctx.deps.k6_wave_index = 8
+    out = run_k6(ctx.deps, [{"id": "health", "method": "GET", "path": "/health"}], rate=5, duration_s=10)
+    assert out.get("experiment_limit_reached") is True
+    assert "limit reached" in out["error"]
+
+
+def test_run_k6_rejects_excessive_rate(tmp_path: Path):
+    from loadline.investigator.k6_tool import run_k6
+
+    ctx = _ctx(tmp_path)
+    out = run_k6(ctx.deps, [{"id": "health", "method": "GET", "path": "/health"}], rate=150, duration_s=10)
+    assert out.get("max_offered_rps") == 30.0
+    assert "exceeds investigator limit" in out["error"]
+
+
+def test_run_k6_fast_caps_rate(tmp_path: Path):
+    from loadline.investigator.k6_tool import run_k6
+
+    ctx = _ctx(tmp_path)
+    ctx.deps.fast = True
+    out = run_k6(ctx.deps, [{"id": "health", "method": "GET", "path": "/health"}], rate=20, duration_s=10)
+    assert out.get("max_offered_rps") == 15.0

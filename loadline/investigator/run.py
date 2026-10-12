@@ -30,8 +30,10 @@ logger = logging.getLogger(__name__)
 
 USER_PROMPT = (
     "The app is booted. Find which endpoints break under load and why, from the code and from run_k6. "
-    "Raise rate until a real handler is no longer stable, keep a cheap health path in that same run_k6 call, "
-    "and end the report with a loadline_fix fence citing that experiment and the handler you read."
+    "Use a small smoke run_k6, then raise offered rate in roughly doubling steps with a cheap health path in the same call. "
+    "Stop when p95 jumps, drops appear, or vus_max_reached — do not chase noisy single-step reversals with many more experiments. "
+    "Respect run_k6 rate and experiment limits in the tool response. "
+    "End the report with a loadline_fix fence citing the saturation experiment and the handler you read."
 )
 
 
@@ -207,6 +209,7 @@ async def run_investigation(
         network=net,
         auth_profiles=_sealed_auth_profiles(repo_root),
         console=console,
+        fast=fast,
     )
 
     resolved_model = model if model is not None else _default_investigator_model()

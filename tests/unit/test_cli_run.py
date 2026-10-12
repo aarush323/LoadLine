@@ -5,6 +5,27 @@ from loadline.cli import main
 from loadline.run_pipeline import RunPipelineResult
 
 
+def test_bare_loadline_non_tty_prints_help(capsys, monkeypatch):
+    monkeypatch.setattr("loadline.cli.is_tty", lambda _stream: False)
+    code = main([])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "usage:" in captured.out.lower()
+
+
+def test_bare_loadline_tty_opens_workspace(monkeypatch):
+    monkeypatch.setattr("loadline.cli.is_tty", lambda _stream: True)
+    called = {}
+
+    def fake_workspace(**kwargs):
+        called["normalize"] = kwargs.get("normalize")
+        return 0
+
+    monkeypatch.setattr("loadline.ui.workspace.run_workspace", fake_workspace)
+    assert main([]) == 0
+    assert called["normalize"] is not None
+
+
 def test_run_json_stdout_no_progress_on_stderr(capsys, tmp_path):
     fake = RunPipelineResult(
         exit_code=0,

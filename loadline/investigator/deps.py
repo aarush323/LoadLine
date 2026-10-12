@@ -32,5 +32,6 @@ class InvestigationDeps:
     allowed_hosts: frozenset[str] = frozenset()
     network: str = ""
     k6_wave_index: int = 0
+    fast: bool = False
     auth_profiles: dict[str, dict[str, str]] = field(default_factory=dict)
     console: Any = None

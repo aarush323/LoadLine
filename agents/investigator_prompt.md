@@ -19,6 +19,7 @@ read_file(path, start_line, end_line)
 run_k6(endpoints, rate, duration_s, auth?)
 - endpoints: {id, method, path, weight?, body?, headers?, use_auth?}. path must be concrete (resolve path params from code, OpenAPI, or tests — never send "/items/{id}" literally). weight defaults to equal split across endpoints.
 - rate and duration_s: load you are offering for this call (duration_s capped at 120; a timeout returns a tool error, not a crashed run).
+- Loadline enforces a per-run experiment count and a maximum offered rate (lower with `loadline run --fast`). If the tool returns experiment_limit_reached or max_offered_rps, stop calling run_k6 and write the report from prior experiments.
 - auth (optional): for protected routes set use_auth: true on those endpoints and pass auth with profile default_user plus login method, path, body_encoding (form vs json), and token_field copied from the login handler — do not send passwords. If login fails, report it; 401 on a protected route is a bad request, not a fast healthy endpoint. Login at high rate can dominate CPU (password hashing); measuring login alone at low rate is often useful.
 Returns experiment_id, offered_rps, duration_s, dropped_iterations, vus_max, vu_ceiling, vus_max_reached, and per-operation count, error_count, error_rate, status_counts, http_status_known, status_counts_reliable, measurement_notes, p50_ms, p95_ms, offered_rps, achieved_rps.
 If status_counts_reliable is false, cite latency, throughput, and dropped iterations only — do not claim specific HTTP status codes or that every request failed.
@@ -28,7 +29,7 @@ Inspect each endpoint in code before loading it. POST is fine when the handler i
 # Suggested flow
 
 1. Discovery — repo(routes), then neighbors/read_file on handlers that do real work (DB, auth, locks, loops, hashing, downstream calls).
-2. Load — smoke at a low rate; when status_counts_reliable is true, confirm 2xx in status_counts before pushing harder. Increase rate, repeat, extend duration, or mix endpoints based on what you see. Repeat when p95 moves are noisy. A handler that holds a connection, lock, or session across a slow await will look stable at low rate; keep raising offered rate until error_rate, 5xx, drops, or p95 jumps, and put a cheap liveness/health path in that same run_k6 call as the control.
+2. Load — smoke at a low rate; when status_counts_reliable is true, confirm 2xx in status_counts before pushing harder. Increase offered rate in roughly doubling steps (not huge jumps to triple-digit rps). Put a cheap liveness/health path in the same run_k6 call as the control. Stop after a clear knee (p95 jump, drops, or vus_max_reached) or when the tool reports an experiment/rate limit — do not keep probing because one step was noisier than the last.
 3. Explain — tie numbers to code you read. Cite experiment_id, operation id, rates, p95_ms, and read_file line ranges.
 
 # Report

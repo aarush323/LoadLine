@@ -13,6 +13,7 @@ from loadline.adapters.generator.k6_operation_metrics import sanitize_operation_
 from loadline.adapters.generator.k6_runner import run_k6_plan
 from loadline.core.hints import slo_from_hints
 from loadline.investigator.deps import InvestigationDeps
+from loadline.investigator.limits import investigator_k6_limits
 
 _PATH_TEMPLATE = re.compile(r"\{[^}]+\}")
 _ALLOWED_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
@@ -273,8 +274,31 @@ def run_k6(
         return {"error": "endpoints must not be empty"}
     if rate <= 0 or duration_s <= 0:
         return {"error": "rate and duration_s must be positive"}
+
+    limits = investigator_k6_limits(deps.fast)
+    if deps.k6_wave_index >= limits.max_waves:
+        return {
+            "error": (
+                f"run_k6 experiment limit reached ({limits.max_waves} calls). "
+                "Write the report from experiments already recorded in this run."
+            ),
+            "experiment_limit_reached": True,
+            "max_waves": limits.max_waves,
+        }
+    if rate > limits.max_offered_rps:
+        return {
+            "error": (
+                f"offered rate {rate} exceeds investigator limit {limits.max_offered_rps} rps. "
+                "Use a lower rate or finish the report from prior run_k6 results."
+            ),
+            "max_offered_rps": limits.max_offered_rps,
+        }
+
+    duration_requested = int(duration_s)
     if duration_s > _MAX_DURATION_S:
         duration_s = _MAX_DURATION_S
+    if duration_s > limits.max_duration_s:
+        duration_s = limits.max_duration_s
     for ep in endpoints:
         err = validate_endpoint(ep)
         if err:
@@ -357,6 +381,9 @@ def run_k6(
         tool_output=out,
     )
     out["experiment_id"] = experiment_id
+    if duration_requested != duration_s:
+        out["duration_s_requested"] = duration_requested
+        out["duration_clamped"] = True
     deps.ledger.append(
         "k6_run",
         evidence_ids=[experiment_id],
