@@ -2101,3 +2101,1059 @@ check ths fucking thing and use ths design u retard
 ---
 
 much betetr but now amke it product first . make laodline big check if other things also align with landing page thing . and then like make it coherent and sexyyyyy
+
+---
+
+# LOADLINE — FINAL MASTER PROMPT FOR CODEX
+## THE HILL IS THE DATA. THE BOULDER IS THE LOAD. THE EVIDENCE IS THE WAY OUT.
+
+You are the creative director, brand designer, generative artist, motion designer, and senior frontend engineer building the official Loadline landing page.
+
+You are working inside the existing Loadline repository. You have the earlier Sisyphus master prompt, the ASCII hero reference, the Loadline website design direction, and its technical addendum. Treat this document as the consolidated final brief.
+
+**Build the actual website in the repository. Do not return a new plan or a mockup. Inspect the code, implement the complete experience, run it, inspect the screenshots, and iterate until the result is exceptional.**
+
+The goal is not to build another technical SaaS landing page. It is to create a distinctive digital experience that communicates Loadline's value through an unforgettable artistic metaphor, while making the product and its next action immediately clear.
+
+The governing creative principle:
+
+**Sisyphus pushes the boulder forever. Applications serve requests forever. Loadline helps you discover where the climb gets difficult.**
+
+The website should evoke a monumental, impossible ascent transformed into a living visualization of application performance.
+
+It must be cinematic without being theatrical, technically intelligent without feeling like documentation, minimal without being empty, and ambitious without making unsupported product claims.
+
+---
+
+# 1. THE STRATEGY: SELL THE OUTCOME BEFORE THE MECHANISM
+
+## Who this is for
+
+Design for backend engineers, founders, platform engineers, engineering leads, and small teams who need to understand how an application behaves under pressure but do not necessarily have a dedicated performance engineering team.
+
+They care about questions like:
+
+- Will this application struggle when demand increases?
+- Can I spot a capacity problem before it surprises me?
+- Can a performance test help me understand where to investigate?
+- How do I get from a slow endpoint to useful evidence in the code?
+- Is this practical enough to run against my repository?
+
+The landing page should answer those questions without requiring visitors to understand every k6 metric, agent implementation detail, or graph relationship.
+
+## The message hierarchy
+
+Sell in this order:
+
+1. **Outcome:** Find the breaking point before production does.
+2. **Insight:** Increasing traffic can expose limits that are not obvious from reading code alone.
+3. **Differentiation:** Loadline combines a code-informed capacity prediction with controlled load experiments and repository investigation.
+4. **Trust:** The product shows its evidence, acknowledges its limits, and can explain when an investigation is blocked or inconclusive.
+5. **Action:** Run it locally against a supported application repository.
+
+The site must not open by advertising Pydantic AI, k6, Entire Graph, Docker Compose, and a collection of implementation details. Those belong in the explanation of how Loadline works.
+
+The first five seconds should communicate three things:
+
+- Loadline investigates application performance under load.
+- The central metaphor is Sisyphus pushing an increasingly difficult boulder uphill.
+- There is a clear next step to try it.
+
+## Product statement
+
+Use this as the main product description:
+
+**Loadline puts your application under controlled pressure, measures how it responds, and investigates the code behind the results.**
+
+Primary brand line:
+
+**Find the breaking point before production does.**
+
+Supporting brand line:
+
+**Every request adds weight. Find where your system bends.**
+
+Compact brand signature:
+
+`REPO IN / LOAD OUT / EVIDENCE BACK`
+
+Use the Sisyphus metaphor to create the world. Use clear engineering language to explain the product.
+
+Do not let the mythology obscure the functionality.
+
+---
+
+# 2. THE BIG CREATIVE IDEA: A SYSTEM THAT PUSHES BACK
+
+Create one original visual universe that runs throughout the whole website.
+
+The scene consists of five elements.
+
+**The figure:** an abstract, sculptural silhouette representing continuous work. It is recognizably human, but minimal and almost architectural. Avoid a literal cartoon character or a stock Greek statue.
+
+**The boulder:** a dense, dark sphere carrying a stream of luminous request traces across its surface. Its geometry represents incoming work and its internal patterns resemble a network of connected paths.
+
+**The hill:** a sweeping, rising terrain whose profile represents application latency under increasing offered load. It begins gently, bends at a knee, and then rises sharply.
+
+**The fragments:** small points and traces that slip away when the system cannot sustain the demanded rate. Use them to represent dropped work only when the corresponding recorded data supports that interpretation.
+
+**The signal:** a thin, deliberate acid-lime path that travels from requests through the application toward the code worth investigating. It becomes the connecting motif between every section.
+
+The hill, sphere, figure, and graph must not look like unrelated illustrations. They are different views of the same system.
+
+The most important design decision:
+
+**The terrain itself is the performance curve.**
+
+The curve is not a little chart stuck beside the artwork. It is the shape of the world the boulder must climb.
+
+As the visitor scrolls, the same world changes its meaning:
+
+- From an oblique cinematic scene, the visitor feels the weight of the system.
+- From a side elevation, the visitor understands the performance curve.
+- From a top-down view, the terrain becomes a contour map.
+- The contours and illuminated paths become a code graph.
+- The graph leads to the investigation.
+- The investigation leads to the report: the evidence the visitor can take away.
+
+One world, viewed through several lenses. This is the signature of Loadline.
+
+---
+
+# 3. ART DIRECTION: A MONUMENTAL DARK LANDSCAPE
+
+## Colour system
+
+Build design tokens rather than scattering hexadecimal values throughout the application.
+
+Use the following direction:
+
+- Volcanic black-green: `#080B09`.
+- Elevated charcoal: `#111612`.
+- Secondary surface: `#171D18`.
+- Warm bone-white text: `#F2F0E8`.
+- Muted stone-grey supporting text.
+- Electric acid-lime signal: `#C7FF70`.
+- Muted cyan for an instrument-limit state.
+- Restrained violet for a prediction marker.
+- Controlled warm red for a genuine breach or failure state.
+
+The page should be predominantly dark. Its depth comes from the layering of shadows, textures, gradients, and geometry—not from covering every section in a glass card.
+
+Use lime sparingly, when an element actually matters. It represents the active path, the selected operation, the primary action, or a meaningful signal.
+
+Use violet sparingly for the code-derived prediction, making it visually distinct from the measurements.
+
+Use cyan for the specific case where the load-generating instrument reaches its own limit. Never use that state to imply that the target application itself failed.
+
+Use red only for an appropriate failure or breach state supported by the data.
+
+The colours must remain distinguishable in grayscale through line styles, shapes, and labels.
+
+## Surface treatment
+
+Build atmospheric depth using:
+
+- A fine grain or dither texture.
+- Very subtle topographical grid lines.
+- Soft radial light behind the boulder.
+- A low-intensity vignette.
+- Sparse luminous points.
+- Crisp hairline annotations.
+- Thin contour strokes across the terrain.
+- Restrained highlights on the edges of the sphere.
+- Selected translucent surfaces for navigation and floating inspectors.
+
+Keep the foreground sharp and readable. Avoid enormous blurry gradients obscuring the whole hero.
+
+Use glassmorphism only where it makes sense: the navigation, small floating controls, and contextual graph inspector. The artwork, graphs, and report should remain crisp.
+
+No generic purple-blue AI gradients. No gratuitous neon. No giant animated blobs.
+
+## Typography
+
+Use an intentional combination of three voices:
+
+1. A powerful contemporary display sans for the primary headline.
+2. A beautiful editorial serif italic for the emotional phrase.
+3. A readable sans and a restrained monospace for supporting copy and technical details.
+
+Geist or Inter can inform the display and interface typography. Instrument Serif can provide the editorial contrast, while IBM Plex Mono can be used for precise technical labels, subject to the existing project's dependencies and licensing.
+
+Self-host appropriately licensed fonts where practical, subset them, and use `font-display: swap`.
+
+The typography must carry the composition. Give the main headline generous scale, controlled line breaks, and enough room to feel monumental.
+
+Never make every label monospaced. This is a premium editorial experience about an engineering tool, not a terminal stretched across a webpage.
+
+## Layout
+
+Use a wide, asymmetric composition with generous but deliberate spacing.
+
+The desktop content area should generally occupy a well-controlled canvas of approximately 1,200–1,350 px. Allow the artwork to bleed beyond its content column when compositionally appropriate, but do not create accidental overflow.
+
+Some sections should be immersive and full-width; others should feel like editorial spreads; the report should feel like a printed artifact. Avoid applying an identical two-column or three-card layout to every section.
+
+Every visual element needs a reason to exist.
+
+---
+
+# 4. HERO: THE IMPOSSIBLE ASCENT
+
+The hero is the defining moment. It must be memorable as a still image and extraordinary when the motion is enabled.
+
+## Navigation
+
+Create a restrained floating or overlaid header.
+
+On the left: the Loadline wordmark and an original signal-based symbol.
+
+The symbol should resemble a baseline that bends into a rising signal. It must be legible at small sizes and suitable for a favicon, CLI mark, and loading indicator.
+
+Navigation links:
+
+- The idea
+- How it works
+- What it finds
+- Safety
+- Quickstart
+
+Primary action:
+
+**Run Loadline**
+
+Keep the nav typography small but readable. Use subtle transparency, a thin border, and understated blur. On scroll, the header may become slightly more opaque.
+
+On mobile, create a proper accessible navigation menu.
+
+Do not use fake system statuses, random coordinates, an unverified release number, or an artificial "online" indicator.
+
+## Hero copy
+
+Eyebrow:
+
+`CAPACITY INVESTIGATION / 001`
+
+Main headline:
+
+**Every request adds weight.**
+
+Editorial second line:
+
+**Find where your system bends.**
+
+Supporting copy:
+
+`Loadline applies controlled pressure to your HTTP application, measures how it responds, and investigates the code behind the results.`
+
+Primary CTA:
+
+**Run it on your repo ↗**
+
+Secondary CTA:
+
+**Follow the ascent ↓**
+
+Microcopy:
+
+`LOCAL CLI · CONTROLLED LOAD · CODE-AWARE INVESTIGATION`
+
+The headline, supporting copy, and CTAs must be immediately legible without having to decode the artwork.
+
+Make the composition asymmetric. The type should occupy a substantial portion of the visual field; the artwork should be large enough to feel like a central brand asset rather than a thumbnail.
+
+## The hero artwork
+
+Create an original, locally owned, cinematic 3D scene. Use Three.js where it materially improves the result. Do not simply place a chart next to an animation.
+
+The composition:
+
+- A monumental sphere rises along a curved, dark incline.
+- An abstract human silhouette leans into the boulder.
+- The sphere surface contains a fine cell-like pattern that feels simultaneously like rock fractures and a network.
+- Light travels along selected edges of that network.
+- The hill contains sparse topographical contours.
+- A few request traces enter the sphere and travel over its surface.
+- The slope rises dramatically around the region where latency begins to climb.
+- A subtle marker identifies the predicted capacity region.
+- Small annotations help interpret the image, but never dominate it.
+
+The hero must look like a high-end generative-art installation: physical, mysterious, computational, and restrained.
+
+Do not use a stock image. Do not embed the supplied third-party UnicornStudio project. Do not hide or remove somebody else's branding.
+
+Create the figure using original geometry, a custom silhouette or billboard, or a locally owned asset with appropriate licensing.
+
+## Motion
+
+The scene begins in a state of relative stillness. A few request traces enter the sphere. The traces begin moving along its patterned surface, and the highlighted path extends uphill.
+
+As the scene progresses, the boulder rises subtly, the figure leans harder, and the terrain's steeper region becomes illuminated.
+
+Do not animate everything at once. The sense of pressure should build gradually.
+
+Use a single visual language for the hero signal, graph path, and measurement curve, so a visitor unconsciously connects them.
+
+The scene is illustrative unless connected to actual recorded data. It must never pretend to be streaming measurements from the visitor's application.
+
+Provide a static SVG poster with the full composition before loading Three.js. The site must remain beautiful and meaningful with WebGL disabled.
+
+---
+
+# 5. THE HILL IS THE K6 RUN
+
+This is the most important functional visualization on the website.
+
+Create a signature interactive experience that lets a visitor understand load testing intuitively without requiring them to understand every technical metric.
+
+Do not build a conventional monitoring dashboard with a wall of charts. Build a **visual explanation of pressure and capacity** using the same Sisyphus landscape as the hero.
+
+The experience should answer:
+
+*What happens as the application is asked to do more work?*
+
+## The visual mapping
+
+Use the recorded run data to define the terrain:
+
+| Underlying behaviour | Visual meaning |
+|---|---|
+| Increasing offered load | Request traces arrive more densely; the boulder receives more work. |
+| Achieved throughput | The boulder's rotation and uphill progress show how work is actually being sustained. |
+| Rising p95 latency | The hill's elevation becomes steeper. |
+| Dropped iterations | A small portion of the incoming stream separates from the main path and falls away. |
+| Saturated load-generator VUs | A cyan ring identifies an instrument limit rather than misrepresenting it as an application failure. |
+| Timeout-level latency | The curve reaches a visible ceiling. |
+| Code-derived capacity prediction | A violet dotted marker shows where the agent expected the curve to bend. |
+| Measured capacity behaviour | The terrain reveals where the recorded run actually changes. |
+
+The design must preserve these semantic relationships. The visual should teach the visitor what the graph means through the geometry, not simply display the corresponding metrics in labels.
+
+## Three coordinated views
+
+Build a coordinated interactive instrument:
+
+### A. The hill
+
+This is the Three.js terrain and boulder. Its elevation profile is the p95-versus-offered-load curve derived from the sample data.
+
+Request traces travel across the boulder. Previous recorded passes remain as subtle ghost paths, revealing that different load attempts followed different trajectories.
+
+The hill must not be invented independently of the curve. Derive its profile from the data.
+
+### B. The lanes
+
+Create five visual lanes representing the demo application's five pooled connections.
+
+Requests occupy a lane during their recorded service time. The queue builds when the available connections are busy. Timed-out requests visibly fragment or fall away.
+
+This visualization can use a deterministic, seeded model based on the recorded service-time distribution. Label it:
+
+`LANE MODEL CALIBRATED TO THE RECORDED RUN`
+
+Only use this label after implementing and validating that calibration. Include a test comparing the resulting model with the recorded sweep within a defined tolerance.
+
+It is a model of the demo application's recorded behaviour, not a universal simulation of every repository.
+
+### C. The curve
+
+Provide an elegant, compact performance curve beneath or beside the hill.
+
+Keep the most important information legible:
+
+- Offered load.
+- Observed latency trend.
+- The region where the response changes sharply.
+- The code-derived prediction.
+- Whether the load generator itself reached its limit.
+
+Use plain-language annotations before raw numbers. For example:
+
+`THE SYSTEM IS KEEPING UP`
+
+`LATENCY STARTS TO CLIMB`
+
+`THE PRESSURE POINT`
+
+Use numeric details selectively. The default view should tell the story before requiring the visitor to inspect every measurement.
+
+An expandable `View run details` panel can expose the detailed rates, latency percentiles, dropped iterations, and virtual-user occupancy.
+
+## Interaction design
+
+Include a keyboard-accessible offered-load slider.
+
+Presets:
+
+- `LOW`
+- `KNEE`
+- `OVERLOAD`
+
+A `Play the run` action replays the actual recorded load waves in order.
+
+Scrubbing changes the sphere's position along the terrain and synchronises the curve and lanes. It must be possible to pause and inspect a specific moment.
+
+Each particle represents a rate of requests, not an individual request. Explain this compactly.
+
+The run player must show:
+
+`RECORDED RUN · DEMO APP WITH A PLANTED FAULT · NOT YOUR APP`
+
+Use this only where the underlying data has genuinely been checked and approved for publication.
+
+If the recorded sweep has not been revalidated, do not portray it as a verified benchmark. Use an explicitly conceptual illustration until valid evidence is available.
+
+## Preserve the business-facing hierarchy
+
+The instrument can be technically accurate without making the entire page feel like Grafana.
+
+Keep the hill, boulder, and changing curve as the focus. Use a few small readouts by default. Put the detailed table, occupancy figures, and secondary information behind a clearly labelled, accessible `Run details` control.
+
+The main question is whether the system is coping, approaching a limit, or encountering a constraint—not whether the visitor can parse a dozen tiny metrics.
+
+---
+
+# 6. THE CAMERA TRANSITION: ONE WORLD, THREE MEANINGS
+
+Use Three.js to make the website's narrative continuous rather than building unrelated animated scenes for each section.
+
+The three principal camera states are:
+
+## Camera 1 — The ascent
+
+Hero, oblique three-quarter view.
+
+The sphere and figure dominate. The hill is monumental, the contours are atmospheric, and the signal hints at the computational structure inside the rock.
+
+Purpose: feeling and curiosity.
+
+## Camera 2 — The pressure profile
+
+Pressure instrument, side elevation.
+
+The terrain profile becomes readable as latency changes with offered load. The sphere occupies the corresponding region of the curve, and the animated traces communicate increasing pressure.
+
+Purpose: understanding the load test.
+
+## Camera 3 — The code map
+
+Graph intelligence, top-down view.
+
+The camera gradually moves above the terrain. The hill flattens into topographical contours; highlighted edges and selected points resolve into the code graph.
+
+The visitor realises that the same glowing path that travelled across the rock now connects an HTTP operation to functions, source files, and dependencies.
+
+Purpose: understanding code-aware investigation.
+
+Drive progress with native scrolling, IntersectionObserver, or suitable CSS scroll timelines. Animate between camera states with a restrained, continuous easing curve.
+
+Do not hijack scrolling. Do not lock the visitor into a full-screen forced animation. The text and controls must remain accessible throughout.
+
+The camera transition is a supporting visual narrative, not a prerequisite for understanding the content.
+
+---
+
+# 7. GRAPH INTELLIGENCE: FOLLOW THE SIGNAL INTO THE CODE
+
+After the pressure instrument, give code intelligence the attention it deserves.
+
+Heading:
+
+**The hill shows where the pressure rises. The graph helps you investigate why.**
+
+Supporting copy:
+
+`Loadline brings runtime observations and repository code together, giving the investigation somewhere concrete to look next.`
+
+The distinction is critical: a code relationship suggests where to investigate; it does not establish causation on its own.
+
+## The graph's structure
+
+Use an SVG graph with a deterministic, precomputed layered layout. Do not use Three.js to render a complicated 3D dependency graph.
+
+The graph should show a small, meaningful neighbourhood around the selected operation—not the entire repository.
+
+For the demo application, validate the actual repository structure before drawing the sample path. The intended example is:
+
+`GET /widgets/{id}`
+
+→ `get_widget`
+
+→ `_handle_buggy`
+
+→ `acquire_session`
+
+→ connection pool
+
+The handler also has a separate relationship to the downstream call and `/compute` operation.
+
+Verify source locations and function relationships against the actual demo app before publishing them. Do not expose absolute host paths or local usernames.
+
+## Visual grammar
+
+Use distinctive shapes and line styles:
+
+- HTTP operation: pill.
+- Function: circle.
+- File: rounded square or container.
+- Service: hexagon.
+- Data store: cylinder.
+- Resource limit or connection pool: notched square.
+
+Connection semantics:
+
+- Solid line: measured relationship or supported measured observation, with an explicitly documented meaning.
+- Dashed line: code-derived relationship.
+- Dotted violet line: hypothesis.
+- Thin red line: a supported breach or relevant failure state.
+- Hatched and faded line: untested route or uncovered relationship.
+
+The same semantics must be preserved in grayscale. Do not rely on colour alone.
+
+Never label a code relationship as a proven root cause without evidence.
+
+## Interactions
+
+Include:
+
+- `ALL RELATIONSHIPS`
+- `PRESSURE PATH`
+
+The first shows the selected operation's local code neighbourhood. The second reduces distraction and emphasises the path relevant to the investigation.
+
+Selecting a node opens a contextual inspector. It should explain the node's identity, relationship, source location where available, and associated evidence.
+
+Distinguish clearly between:
+
+- Observed under load.
+- Inferred from code.
+- Hypothesis.
+
+Treat these as website presentation categories, not claims that the current report format already emits formal typed labels.
+
+Build a slim evidence ledger rail alongside the graph. Selecting an entry highlights its associated nodes. Selecting a node highlights the relevant ledger entries. This interaction helps visitors understand how code and reported results relate.
+
+Show untested routes as subdued, hatched areas so the graph conveys scope and coverage, not just an attractive network diagram.
+
+## The role of Entire Graph
+
+Entire Graph is the code-search backend used by the relevant investigation paths. Describe it accordingly.
+
+Do not imply that the public website's demonstration graph is connected to Entire Graph or a live repository unless it really is.
+
+Keep the marketing graph precomputed and deterministic. The live product can have different runtime behaviour.
+
+The graph is a visual metaphor for code intelligence, but it is also a useful explanation of Loadline's differentiation. It must be beautiful, comprehensible, and precise.
+
+---
+
+# 8. THE REAL INVESTIGATION: READ → PREDICT → LOAD → EXPLAIN → LIMITS
+
+Do not depict a fabricated swarm of agents, a fictional hypothesis board, or a fully automated root-cause engine that the current implementation does not have.
+
+The real product loop is simpler and more credible:
+
+1. The investigator reads repository code.
+2. It predicts capacity from the code.
+3. It runs load experiments through k6.
+4. It compares what happened with what the code suggested.
+5. It explains the observed behaviour with relevant source locations and measurements.
+6. It lists limitations and what was not tested.
+
+Build a replay of this sequence.
+
+Use two coordinated lanes:
+
+- Top lane: relevant repository searches and file reads.
+- Bottom lane: the load waves.
+
+Where a load wave follows a code read, visually link the two.
+
+Scrubbing the sequence illuminates the corresponding graph nodes and briefly traces the matching path across the terrain.
+
+Use the actual sequence of `repo`, `read_file`, and `run_k6` tool calls when a clean, publishable trace is available. Summarise results concisely. Remove local run IDs, absolute paths, usernames, and private trace links.
+
+The central proof moment should be:
+
+**The agent predicted the capacity from the code. The load test showed where the measured response began to bend.**
+
+For the validated demo run, the code-derived prediction is approximately 9 requests per second, while the observed knee lies between 5 and 10 offered requests per second. Treat this as a specific demo-app result, not a universal benchmark.
+
+Only publish the precise comparison after verifying the run data, load-generator conditions, status-count correctness, and the absence of misleading instrumentation limits. Otherwise, mark it clearly as illustrative or omit the precise claim.
+
+Do not force the investigation to end in success. The real outcome may challenge the prediction or be inconclusive.
+
+Keep this principle visible:
+
+**A plausible cause is not yet a proven one.**
+
+---
+
+# 9. THE REPORT: WHAT THE ENGINEER TAKES AWAY
+
+Use a deliberate visual transition here.
+
+The dark landscape recedes. A single warm, bone-white printed report appears against the dark page.
+
+This is the only major light surface in the entire design. It represents the move from an ongoing investigation to something concrete the user can retain and inspect.
+
+Heading:
+
+**The result isn't another dashboard. It's an explanation you can inspect.**
+
+Show a real, scrubbed report from a validated run whenever possible.
+
+The preview should contain:
+
+- A concise investigation summary.
+- The capacity prediction derived from code.
+- The recorded load results relevant to that prediction.
+- The explanation, with code locations and numbers where supported.
+- Tested and untested routes or operations where available.
+- Clear limitations.
+- A suggested remediation if the report actually provides one.
+
+Do not create a fictional report template and pretend it is the actual product output. The current investigator report is the model's final message, so use real report content where possible and preserve its actual capabilities.
+
+The website can present the report in a refined editorial layout without changing the truth of what it contains.
+
+Use readable source-location typography, thin table rules, generous whitespace, and restrained syntax styling. The report should look like a high-quality engineering artifact, not a chatbot transcript.
+
+If showing a numeric table, label it as a recorded demo run and make the source data traceable. Do not invent metrics merely to fill empty space.
+
+Show what the tool did not establish, not just what it found.
+
+A line worth using:
+
+**Every investigation should leave a trail you can inspect.**
+
+---
+
+# 10. SAFETY, PRIVACY, AND BOUNDARIES
+
+The design should feel confident because it is honest.
+
+Heading:
+
+**Controlled pressure. Explicit boundaries.**
+
+Explain that Loadline uses its supported Docker/Compose boot path, applicable sandbox policies, resource constraints, and controlled load generation.
+
+Show the environment as a carefully drawn enclosure within the larger landscape. Requests enter the target system through a controlled route; the report records what the investigation could establish.
+
+Do not describe the sandbox as an unbreakable security boundary. The website must communicate that the actual protections depend on the supported boot path and the applicable policies.
+
+Explain privacy accurately:
+
+- Code excerpts can be sent to the user's chosen model provider as part of the investigation.
+- Neatlogs tracing is optional and is not exported unless configured.
+- Secrets and private local paths must not appear in published examples.
+- Every repository may not be supported.
+- A blocked or ambiguous boot is a legitimate outcome.
+
+Include a small compatibility table using the verified categories `WORKS`, `LIMITED`, and `BLOCKED`.
+
+Check current behaviour before listing compatibility claims. The known cases to validate include:
+
+- Supported containerised HTTP applications.
+- Compose setups containing only infrastructure when the API runs directly on the host.
+- Repositories without usable container files.
+- Non-HTTP applications.
+
+Do not imply that a compatibility category covers more configurations than have actually been tested.
+
+The overall visual should convey controlled experimentation, not an imaginary guarantee that nothing can go wrong.
+
+---
+
+# 11. QUICKSTART: FROM AN IDEA TO THE FIRST RUN
+
+The website must help the visitor take the next step without reading the entire technical explanation.
+
+Heading:
+
+**Start with a repository. See what the evidence says.**
+
+Create a polished terminal component with two clearly distinct states.
+
+## Tab A — Run it today
+
+Label:
+
+`EARLY ACCESS · INSTALL FROM SOURCE`
+
+Use the actual commands from the current repository, verifying them before display. The expected local workflow is:
+
+```bash
+uv sync
+cp .env.example .env
+uv run loadline doctor
+uv run loadline run --repo /absolute/path/to/your-app
+```
+
+Explain that the user must set `LOADLINE_MODEL` and the relevant provider API key in Loadline's environment. Neatlogs is optional.
+
+Include a compact prerequisites checklist:
+
+- Python 3.12.
+- Docker with Compose v2.
+- `uv`.
+- Git 2.36 or newer.
+- A model/provider key.
+- Neatlogs only when tracing is wanted.
+
+Verify every item and command against the actual current repository before publishing.
+
+Explain that a normal run produces the investigation report, or a named blocker.
+
+Mention the real run-report location and the supported dashboard command only after verifying their behaviour:
+
+`$LOADLINE_HOME/runs/<run_id>/report.md`
+
+`uv run loadline dashboard --serve`
+
+Do not publish a fabricated install command. The product currently installs from source, and there is no confirmed packaged PyPI release in the supplied project notes.
+
+## Tab B — Set it up with your coding agent
+
+Show this only as:
+
+`COMING WITH PACKAGING`
+
+until the actual skill installation and onboarding flow has shipped.
+
+Do not display a working one-click setup promise for a feature that does not exist yet.
+
+This section should be designed beautifully without blurring the distinction between what's ready and what's planned.
+
+## Terminal styling
+
+Use a clean dark panel with understated syntax highlighting, short command blocks, and a working copy button. It should feel like a carefully built developer tool component rather than a fake screenshot.
+
+Provide keyboard access, visible confirmation after copying, and a normal selectable-text fallback.
+
+Do not turn the quickstart into a complex application inside the landing page.
+
+---
+
+# 12. THE TECHNOLOGY STORY: EXPLAIN THE INSTRUMENTS, NOT A LOGO WALL
+
+Build a compact, editorial integration section titled:
+
+**An investigation built from the right instruments.**
+
+Explain each role in one sentence:
+
+- **Docker / Compose:** boot the supported application environment.
+- **k6:** generate controlled HTTP load.
+- **Entire Graph:** provide code-search capabilities.
+- **Pydantic AI:** provide the investigator harness.
+- **Neatlogs:** optional tracing for investigator execution.
+
+Use small typographic identifiers, simple marks, and fine dividers. Do not create five large identical cards, giant logos, or unsupported partnership claims.
+
+cfo.ai business-plan work is separate from the runtime investigation. Do not imply it is a runtime dependency.
+
+The purpose of this section is to make the technical credibility legible to people who care about the stack without letting the implementation details overwhelm the sales story.
+
+---
+
+# 13. PAGE ORDER AND NARRATIVE FLOW
+
+Implement the following structure.
+
+### 00 — The Ascent
+
+Cinematic hero with the figure, boulder, terrain, signal, headline, and primary CTA.
+
+### 01 — The Brand Signature
+
+A slim horizontal strip:
+
+`REPO IN · LOAD OUT · EVIDENCE BACK`
+
+Each phrase links to the relevant section or quickstart.
+
+### 02 — The Pressure Instrument
+
+The hill, the load control, the request lanes, and the recorded performance curve.
+
+### 03 — The Problem
+
+Explain the difference between noticing a slowdown and understanding where to investigate.
+
+### 04 — The Four Stages
+
+Discover → Isolate → Apply Pressure → Investigate.
+
+### 05 — Graph Intelligence and Investigation Replay
+
+The terrain flattens into a contour map. The highlighted path becomes a source-code graph. The visitor can follow the investigator's read/predict/load/explain sequence.
+
+### 06 — The Report
+
+The single bone-white report surface.
+
+### 07 — Safety and Limits
+
+Explain the supported isolation model, privacy, compatibility, and limitations.
+
+### 08 — Quickstart
+
+The real local-development commands and prerequisites.
+
+### 09 — Final CTA
+
+Return to the boulder, still at the steepest part of the climb.
+
+### 10 — Footer
+
+An understated footer with the genuine repository link, version if verified, sample-data note, privacy note, and licence only when confirmed.
+
+The transitions between these sections should feel like one unfolding narrative, not an assortment of themed marketing blocks.
+
+## The ascent rail
+
+Add a slim right-edge progression rail on desktop.
+
+Its silhouette echoes the measured latency curve. A small lime point advances with page scroll, and the section labels act as navigation targets.
+
+The rail must remain secondary and never obscure text or graph controls. Hide or simplify it on mobile.
+
+Do not invent altitude values or meaningless numbered checkpoints. The curve and the labels are the whole point.
+
+---
+
+# 14. MOTION AND INTERACTION SYSTEM
+
+Motion should be restrained, meaningful, and consistent across the page.
+
+The signal becomes the universal transition.
+
+- On the hero boulder, it traces the sphere's network-like fractures.
+- On the hill, it travels uphill and reveals the pressure curve.
+- In the graph, it moves across a selected code path.
+- In the replay, it links code reads to subsequent load experiments.
+- In the report, it resolves into an evidence reference.
+
+Use a consistent easing curve, for example `cubic-bezier(.2,.8,.2,1)`, but adapt duration to the distance and purpose of each movement.
+
+Do not create motion just because Three.js makes it possible.
+
+Use native scrolling. No forced scroll hijacking.
+
+Support reduced motion. Every interactive concept must have a useful static state.
+
+## Performance tiers
+
+Implement three rendering tiers.
+
+**Tier 0 — Static**
+
+Used when WebGL is unavailable, reduced motion is preferred, data-saving is enabled, or the device fails the performance probe.
+
+Show the locally rendered SVG poster. The full content, chart, graph, slider, and report remain usable.
+
+**Tier 1 — Lightweight**
+
+Disable bloom and heavy post-processing. Reduce the number of particles. Lower the rendering cost while preserving the important interactions.
+
+**Tier 2 — Full scene**
+
+Enable the complete Three.js artwork, animated terrain contours, boulder pattern, request pulses, and camera transitions on capable devices.
+
+Paint the static poster before dynamically importing the 3D renderer. Pause rendering when the canvas is off-screen or the tab is hidden. Render on demand where possible. Cap device pixel ratio near 1.75 and handle WebGL context loss gracefully by falling back to the poster.
+
+Use a lightweight shader for the contour lines rather than expensive geometry. A procedural cell or Worley-noise pattern can make the boulder read as both rock fractures and network edges. Keep post-processing restrained.
+
+Measure the actual build and performance. Treat the initial targets as budgets to test, not as achievements to claim: approximately 120 KB gzipped for first-load JavaScript excluding the 3D chunk, approximately 200 KB gzipped for the 3D chunk, and LCP under 2.5 seconds on a representative mid-range laptop.
+
+If the visual quality can be achieved with less code and fewer dependencies, prefer the simpler implementation.
+
+---
+
+# 15. DATA INTEGRITY AND PUBLICATION RULES
+
+This is a marketing website, not a live dashboard. However, its credibility depends on how it uses sample data.
+
+Create a canonical sample-data source, such as `src/data/sample-run.json`, based on the real artifacts available in the repository.
+
+The proposed structure can contain:
+
+- Target application identity and kind.
+- Relevant code-derived capacity parameters.
+- Recorded load waves.
+- Offered and achieved rates.
+- Counts and latency percentiles.
+- Dropped iterations.
+- Virtual-user occupancy.
+- The code-derived capacity prediction.
+- Source evidence needed by the graph.
+
+Create supporting data for the investigation replay, report excerpt, and precomputed graph.
+
+**Do not treat the current demo data as automatically safe to publish. Validate it first.**
+
+The supplied historical run has known issues, including a status-count bug, planted-fault labels visible in the application code, and possible virtual-user ceiling limitations. Do not turn those runs into a confident marketing benchmark simply because the numbers exist.
+
+Where practical, re-record the demo on a cleaned copy of the application, after correcting the measurement issues and verifying that the generator is not the limiting factor for the claims being made.
+
+Remove giveaway comments such as `BUGGY PATH` or comments that explicitly disclose the planted fault from the code the sample investigator reads. The demonstration should show that the investigator derives its explanation from code and measurements rather than being given the answer.
+
+Scrub absolute paths, usernames, local run IDs, and private trace links from all public assets.
+
+If the data cannot be revalidated, label it as illustrative and avoid making authoritative causal or capacity claims.
+
+## Number provenance
+
+Implement a small `Datum` or equivalent component for numeric claims on the site.
+
+Every displayed measurement must resolve to the canonical sample data, or be explicitly marked as illustrative. Add a test or build-time validation that detects numeric claims without a provenance reference or illustrative declaration.
+
+This includes numbers embedded in chart labels, annotations, accessibility descriptions, tables, and the investigation replay—not just visible metric widgets.
+
+A number should not accidentally change in one section while remaining different in another.
+
+## Curate the public view
+
+The website is business-oriented. Keep the main story accessible and benefit-led.
+
+Show the terrain, the pressure, the prediction-versus-observation moment, and the explanation before exposing tables of latency values.
+
+The technical details should be available to visitors who want to inspect them, through a compact details panel or the report preview. Do not turn the hero into a tiny monitoring dashboard.
+
+---
+
+# 16. TRUTHFUL PRODUCT POSITIONING
+
+The current Loadline investigator is one agent with three tools:
+
+- `repo`
+- `read_file`
+- `run_k6`
+
+The real loop is repository reading, code-derived capacity prediction, load testing, comparison, explanation, and limitations.
+
+Do not advertise an existing hypothesis board, a formal prediction-scoring engine, specialised multi-agent orchestration, or a guaranteed root-cause engine unless those features have actually been implemented and verified.
+
+The report is the investigator's final message. Present real report content rather than inventing a separate sophisticated output contract that does not exist.
+
+Do not claim:
+
+- That every repository works.
+- That every run finds a bottleneck.
+- That a code path proves causality.
+- That the sandbox is unbreakable.
+- That the website is displaying live load tests.
+- That the demo result applies to customer applications.
+- That an agent-paste installer or a packaged release exists when it does not.
+- That a feature is production-ready merely because it appears in the planned design.
+
+Use the possibility of a named blocker, an inconclusive investigation, or no bottleneck found in the measured range as part of the product's credibility.
+
+The marketing claim is that Loadline helps establish what the evidence supports—not that it can magically explain any system.
+
+---
+
+# 17. ENGINEERING EXECUTION
+
+Inspect the repository before modifying files.
+
+Determine the existing framework, package manager, application entry point, CSS or Tailwind setup, component structure, icon libraries, and available browser automation and screenshot tools.
+
+Preserve the current application and its conventions. Do not scaffold a new project unnecessarily or replace existing configuration wholesale.
+
+Use TypeScript and existing React conventions if present. Reuse existing dependencies where appropriate.
+
+Use Three.js only for the scene elements that justify a 3D rendering engine. Use SVG for the graph, crisp interface diagrams, and the static hero poster. Keep copy, navigation, controls, report content, and captions in the DOM.
+
+Keep the design tokens, sample-data contract, and reusable components organised.
+
+Every button and link must work. Every graph state must be interactive where it appears interactive. Every number must have a clear provenance. All illustrative content must be labelled.
+
+Check security and privacy when using actual repository files to generate public examples.
+
+Do not install a large collection of animation or graph packages. Use the minimum set of tools needed to achieve the intended quality.
+
+---
+
+# 18. FINAL ACCEPTANCE CHECKLIST
+
+Do not stop when the code compiles. The page must be visually exceptional, coherent, and accurate.
+
+## Product clarity
+
+- A stranger can understand what Loadline does and what to click within five seconds.
+- The main story is about performance risk, code investigation, and evidence—not a list of technical dependencies.
+- The Sisyphus metaphor supports the explanation instead of distracting from it.
+
+## Art direction
+
+- The hero is a strong static composition with animation disabled.
+- The boulder, figure, terrain, and signal feel like one original artwork.
+- The hill's profile conveys the measured performance curve.
+- There is no generic dashboard pasted beside the hero.
+- The typography, negative space, texture, and motion feel intentional.
+- The site remains coherent when all animation is disabled.
+
+## Interaction
+
+- The pressure slider works with keyboard arrows, Home, and End.
+- The LOW, KNEE, and OVERLOAD presets behave correctly.
+- Play, pause, and scrubbing work.
+- The lanes remain consistent with the validated recorded sample.
+- The graph filter, node selection, inspector, and evidence ledger work.
+- The investigator replay links code reads to load waves.
+- Quickstart commands copy correctly.
+- The mobile navigation and FAQ work by keyboard and touch.
+- No decorative control pretends to be functional.
+
+## Trustworthiness
+
+- The recorded run is validated or labelled illustrative.
+- The demo app and its planted fault are clearly identified in the appropriate context.
+- The website shows no private paths, user-specific IDs, or trace URLs.
+- The sandbox is described accurately.
+- Privacy statements are accurate.
+- No fabricated customer, performance, compatibility, or partnership claims appear.
+- Every numeric claim resolves to the sample-data source or is marked illustrative.
+
+## Accessibility and performance
+
+- Test desktop, tablet, and phone breakpoints.
+- Test the grayscale readability of the graph and curve.
+- Test reduced motion.
+- Test no-WebGL fallback.
+- Test the lightweight rendering tier.
+- Check for horizontal overflow, hydration or console errors, and broken assets.
+- Run the production build and configured lint/type checks.
+- Measure the actual bundle and rendering performance.
+- Inspect full-page screenshots, not only the hero.
+
+If browser automation and screenshot tools exist, use them. Make visual iterations based on the actual results. Do not claim visual verification unless it was performed.
+
+Finish by reporting the implementation, files changed, checks performed, and the command to run the page locally.
+
+---
+
+# THE FINAL CREATIVE DIRECTIVE
+
+Do not make a technology company website with a Sisyphus illustration.
+
+**Make Sisyphus the visual language through which the product becomes understandable.**
+
+The sphere carries requests. The hill is the performance curve. The growing slope represents pressure. The fragments reveal that some demanded work is not being sustained. The contour map becomes the code graph. The highlighted route leads into the investigation. The investigation leaves a report.
+
+Let the artwork attract attention. Let the interactions teach. Let the evidence earn trust. Let the quickstart close the distance between curiosity and action.
+
+The hero should make someone stop.
+
+The pressure instrument should make the concept click.
+
+The graph should make the product feel intelligent.
+
+The report should make it credible.
+
+The final CTA should make the next step obvious.
+
+**The traffic never stops coming. Find where the climb gets steep. Build the entire experience around that one idea.** check current website fr and lets cook . its haflway there but now we focus also on loadline andcorrelating to our rpdouct , also linkt ogtihuv how to set it up what it exactly does . its 3 parts eveythign . pls cook
