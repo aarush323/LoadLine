@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 from loadline.cli import main
-from loadline.ui.run_index import match_runs, scan_runs
+from loadline.ui.run_index import match_runs, run_booted, scan_runs
 
 
 def _make_run(root: Path, run_id: str, repo: str, offered: float, dropped: int = 0) -> Path:
@@ -56,6 +56,24 @@ def test_scan_runs_repo_filter_and_prefix_match(tmp_path: Path):
     assert len(match_runs(scan_runs(runs), "aaa")) == 1
     assert len(match_runs(scan_runs(runs), "aa")) == 2
     assert match_runs(scan_runs(runs), "zzz") == []
+
+
+def test_scan_runs_booted_only_hides_failed_boot(tmp_path: Path):
+    runs = tmp_path / "runs"
+    _make_run(runs, "live111", "/repos/checkout-api", 5.0)
+    failed = runs / "dead222"
+    failed.mkdir(parents=True)
+    (failed / "profile.json").write_text(json.dumps({"root": "/repos/dead"}))
+    (failed / "attempts.json").write_text(json.dumps({
+        "attempts": [],
+        "blocker": {"code": "boot_failed", "summary": "image build failed"},
+    }))
+    all_runs = scan_runs(runs)
+    assert {s.run_id for s in all_runs} == {"live111", "dead222"}
+    assert run_booted(next(s for s in all_runs if s.run_id == "live111"))
+    assert not run_booted(next(s for s in all_runs if s.run_id == "dead222"))
+    booted = scan_runs(runs, booted_only=True)
+    assert [s.run_id for s in booted] == ["live111"]
 
 
 def test_dashboard_json_and_run_prefix(tmp_path: Path, capsys, monkeypatch):

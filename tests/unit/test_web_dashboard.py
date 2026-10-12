@@ -162,9 +162,10 @@ def test_run_page_hypothesis_failed_shows_both_p95_and_no_pr(tmp_path: Path):
     page = render_run_page(run_dir, "fail111")
     assert page
     assert "5774" in page and "900" in page
-    assert "No pull request." in page
     assert "hypothesis failed" in page.lower()
     assert 'id="verification"' in page
+    assert 'class="section verify-panel"' not in page
+    assert page.count('id="verification"') == 1
 
 
 def test_run_page_without_verification_does_not_invent_after(tmp_path: Path):
@@ -175,6 +176,89 @@ def test_run_page_without_verification_does_not_invent_after(tmp_path: Path):
     assert 'id="verification"' not in page
     assert "No pull request." not in page
     assert "Cited p95" not in page
+
+
+def test_run_page_hypothesis_is_full_width_box(tmp_path: Path):
+    run_dir = _make_run(tmp_path / "runs", "hypobox")
+    (run_dir / "report.md").write_text("## Verdict\n\nThe widget waits on the pool under load.\n")
+    page = render_run_page(run_dir, "hypobox")
+    assert 'class="hypothesis-box"' in page
+    assert 'class="hypothesis-label"' in page
+    assert "Investigator hypothesis" in page
+    assert "The widget waits on the pool under load." in page
+
+
+def test_report_code_section_keeps_first_and_last_fence(tmp_path: Path):
+    run_dir = _make_run(tmp_path / "runs", "codehalf")
+    source = (
+        "## Verdict\n\nEndpoint degrades.\n\n"
+        "## Code\n\n"
+        "Buggy handler holds the connection:\n\n"
+        "```python\n"
+        "async def buggy():\n    await hold()\n"
+        "```\n\n"
+        "Pool is tiny:\n\n"
+        "```python\n"
+        "pool_size = 5\n"
+        "```\n\n"
+        "Checkout is eager:\n\n"
+        "```python\n"
+        "await session.connection()\n"
+        "```\n\n"
+        "Fixed path releases first:\n\n"
+        "```python\n"
+        "async def fixed():\n    await release()\n"
+        "```\n\n"
+        "## Next step\n\nUse the fixed path.\n"
+    )
+    (run_dir / "report.md").write_text(source)
+    page = render_run_page(run_dir, "codehalf")
+    start = page.find('class="panel report-md"')
+    end = page.find("</section>", start)
+    report_html = page[start:end]
+    assert report_html.count("<pre><code>") == 2
+    assert "async def buggy():" in report_html
+    assert "async def fixed():" in report_html
+    assert "pool_size = 5" not in report_html
+    assert "await session.connection()" not in report_html
+    assert "2 of 4 excerpts shown. Full Code section is in report.md." in report_html
+    assert "Use the fixed path." in report_html
+    assert "pool_size = 5" in (run_dir / "report.md").read_text()
+
+
+def test_index_hides_runs_that_did_not_boot(tmp_path: Path):
+    runs = tmp_path / "runs"
+    _make_run(runs, "booted01")
+    failed = runs / "bootfail"
+    failed.mkdir(parents=True)
+    (failed / "profile.json").write_text(json.dumps({"root": "/nonexistent/repo-xyz"}))
+    (failed / "attempts.json").write_text(json.dumps({
+        "attempts": [],
+        "blocker": {"code": "boot_failed", "summary": "compose up failed"},
+    }))
+    missing = runs / "noentry"
+    missing.mkdir(parents=True)
+    (missing / "profile.json").write_text(json.dumps({"root": "/nonexistent/other"}))
+    (missing / "attempts.json").write_text(json.dumps({
+        "attempts": [],
+        "blocker": {"code": "no_entrypoint", "summary": "No Compose file or Dockerfile was found."},
+    }))
+    server = _serve_tmp(tmp_path)
+    try:
+        port = server.server_address[1]
+        code, body = _get(port, "/")
+        assert code == 200
+        assert "booted01" in body
+        assert "bootfail" not in body
+        assert "noentry" not in body
+        payload = json.loads(_get(port, "/api/runs")[1])
+        ids = [row["run_id"] for row in payload]
+        assert ids == ["booted01"]
+        code, direct = _get(port, "/runs/bootfail")
+        assert code == 200
+        assert "compose up failed" in direct
+    finally:
+        server.shutdown()
 
 
 def test_k6_only_ledger_has_no_hypothesis_placeholder(tmp_path: Path):

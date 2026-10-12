@@ -566,11 +566,18 @@ def _md_to_html(text: str) -> str:
                 flush_para()
                 i += 1
                 continue
+            if re.match(r"^\d+ of \d+ excerpts shown\.", stripped):
+                flush_para()
+                html_out.append(f'<p class="code-condense-note">{esc(stripped)}</p>')
+                i += 1
+                continue
             if stripped.startswith("#"):
                 flush_para()
                 hashes = len(stripped) - len(stripped.lstrip("#"))
                 level = min(max(hashes, 1), 3)
-                html_out.append(f"<h{level}>{_md_inline(stripped[hashes:].strip())}</h{level}>")
+                title = stripped[hashes:].strip()
+                hid = ' id="verification"' if level == 2 and title.lower() == "verification" else ""
+                html_out.append(f"<h{level}{hid}>{_md_inline(title)}</h{level}>")
                 i += 1
                 continue
             if _looks_like_table(lines, i):
@@ -592,27 +599,6 @@ def _md_to_html(text: str) -> str:
     return "".join(html_out)
 
 
-def _ratio(value: Any) -> str:
-    try:
-        return f"{float(value):.2f}"
-    except (TypeError, ValueError):
-        return "Not measured"
-
-
-def _rate(value: Any) -> str:
-    try:
-        return f"{float(value):.1f} req/s"
-    except (TypeError, ValueError):
-        return "Not measured"
-
-
-def _achieved(value: Any) -> str:
-    try:
-        return f"{float(value):.2f} req/s"
-    except (TypeError, ValueError):
-        return "Not measured"
-
-
 def _call_label(verif: dict[str, Any]) -> str:
     ep = verif.get("endpoint") if isinstance(verif.get("endpoint"), dict) else {}
     method = str(ep.get("method") or "GET").upper()
@@ -628,58 +614,6 @@ def _verdict_word(verdict: str) -> str:
 
 def _failed_verdict(verdict: str) -> bool:
     return verdict in ("hypothesis_failed", "regressed_control")
-
-
-def _row_pair(label: str, before: str, after: str | None, *, after_col: bool) -> str:
-    after_cell = f"<td class=\"num\">{esc(after)}</td>" if after_col and after is not None else ""
-    return f"<tr><td>{esc(label)}</td><td class=\"num\">{esc(before)}</td>{after_cell}</tr>"
-
-
-def _verify_panel_html(verif: dict[str, Any] | None) -> str:
-    if not verif:
-        return ""
-    before = verif.get("before") if isinstance(verif.get("before"), dict) else {}
-    after = verif.get("after") if isinstance(verif.get("after"), dict) else None
-    ctrl_b = verif.get("control_before") if isinstance(verif.get("control_before"), dict) else {}
-    ctrl_a = verif.get("control_after") if isinstance(verif.get("control_after"), dict) else {}
-    after_col = isinstance(after, dict)
-    head_after = "<th>After</th>" if after_col else ""
-    call = _call_label(verif)
-    rate = _rate(verif.get("rate"))
-    duration = verif.get("duration_s")
-    dur = f"{int(duration)} s" if isinstance(duration, (int, float)) else "Not measured"
-    after_p95 = _ms(after.get("p95_ms")) if after_col else None
-    after_err = _ratio(after.get("error_rate")) if after_col else None
-    after_ach = _achieved(after.get("achieved_rps")) if after_col else None
-    after_ctrl = _ms(ctrl_a.get("p95_ms")) if after_col else None
-    after_exp = str(after.get("experiment_id") or "") if after_col else None
-    rows = "".join(
-        [
-            _row_pair("Experiment", str(verif.get("experiment_id") or "—"), after_exp, after_col=after_col),
-            _row_pair("Call", call, call if after_col else None, after_col=after_col),
-            _row_pair("Offered rate", rate, rate if after_col else None, after_col=after_col),
-            _row_pair("Duration", dur, dur if after_col else None, after_col=after_col),
-            _row_pair("p95", _ms(before.get("p95_ms")), after_p95, after_col=after_col),
-            _row_pair("Error rate", _ratio(before.get("error_rate")), after_err, after_col=after_col),
-            _row_pair("Achieved", _achieved(before.get("achieved_rps")), after_ach, after_col=after_col),
-            _row_pair("Control p95", _ms(ctrl_b.get("p95_ms")), after_ctrl, after_col=after_col),
-        ]
-    )
-    branch = str(verif.get("branch") or "").strip()
-    pr_url = str(verif.get("pr_url") or "").strip()
-    if pr_url.startswith("https://") or pr_url.startswith("http://"):
-        pr_html = f'<a class="pr-link" href="{esc(pr_url)}" rel="noopener noreferrer" target="_blank">{esc(pr_url)}</a>'
-    else:
-        pr_html = "No pull request."
-    foot_l = f"Branch {esc(branch)}" if branch else "Branch not recorded"
-    return (
-        '<section class="section verify-panel" id="verification">'
-        '<div class="section-head"><div><div class="section-title">Verification</div>'
-        '<div class="section-desc">Cited call, same offered rate, numbers copied from verification.json.</div></div></div>'
-        '<div class="panel"><div class="table-wrap"><table class="ops-table">'
-        f"<thead><tr><th></th><th>Before</th>{head_after}</tr></thead><tbody>{rows}</tbody></table></div>"
-        f'<div class="table-foot"><span>{foot_l}</span><span>{pr_html}</span></div></div></section>'
-    )
 
 
 def _blocker_panel_html(blocker: dict[str, Any] | None) -> str:
@@ -754,19 +688,83 @@ def _hypothesis_html(md: str) -> str:
     if not para:
         return ""
     return (
-        '<p class="hypothesis-prose"><span class="label">Investigator hypothesis</span>'
-        f"{esc(para)}</p>"
+        '<aside class="hypothesis-box" aria-label="Investigator hypothesis">'
+        '<div class="hypothesis-label">Investigator hypothesis</div>'
+        f'<p class="hypothesis-prose">{esc(para)}</p></aside>'
     )
 
 
-def _report_section_html(md: str) -> str:
-    if not md.strip():
+_FENCE_RE = re.compile(r"```[^\n]*\n[\s\S]*?```")
+_H2_RE = re.compile(r"(?m)^##[ \t]+(.+)$")
+
+
+def _last_paragraph(prose: str) -> str:
+    text = prose.strip()
+    if not text:
+        return ""
+    return re.split(r"\n\s*\n", text)[-1].strip()
+
+
+def _condense_code_body(body: str) -> tuple[str, int, int]:
+    fences = list(_FENCE_RE.finditer(body))
+    total = len(fences)
+    if total <= 2:
+        return body, total, total
+    keep = {0, total - 1}
+    chunks: list[str] = []
+    pos = 0
+    for i, match in enumerate(fences):
+        prose = body[pos:match.start()]
+        if i in keep:
+            intro = _last_paragraph(prose)
+            if intro:
+                chunks.append(intro)
+            chunks.append(match.group(0))
+        pos = match.end()
+    note = f"{len(keep)} of {total} excerpts shown. Full Code section is in report.md."
+    chunks.append(note)
+    return "\n\n".join(chunks) + "\n", len(keep), total
+
+
+def _condense_report_code(md: str) -> str:
+    matches = list(_H2_RE.finditer(md))
+    if not matches:
+        return md
+    out: list[str] = []
+    if matches[0].start() > 0:
+        out.append(md[: matches[0].start()])
+    for i, match in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(md)
+        heading_line = match.group(0)
+        title = match.group(1).strip()
+        body = md[match.end():end]
+        if title.lower() == "code":
+            condensed, _kept, _total = _condense_code_body(body)
+            body = "\n" + condensed.lstrip("\n")
+        elif not body.startswith("\n"):
+            body = "\n" + body
+        out.append(heading_line + body)
+    return "".join(out)
+
+
+def _has_verification_heading(md: str) -> bool:
+    return bool(re.search(r"(?m)^##\s+Verification\s*$", md))
+
+
+def _report_section_html(md: str, verification: dict[str, Any] | None = None) -> str:
+    text = md
+    if verification and not _has_verification_heading(text):
+        from loadline.verify_cmd import render_comparison
+
+        text = text.rstrip() + "\n" + render_comparison(verification)
+    text = _condense_report_code(text)
+    if not text.strip():
         return ""
     return (
         '<section class="section" id="report">'
         '<div class="section-head"><div><div class="section-title">Report</div>'
-        '<div class="section-desc">Canonical write-up from report.md. Numbers in the verification panel come from verification.json.</div></div></div>'
-        f'<div class="panel report-md">{_md_to_html(md)}</div></section>'
+        '<div class="section-desc">Canonical write-up from report.md.</div></div></div>'
+        f'<div class="panel report-md">{_md_to_html(text)}</div></section>'
     )
 
 
@@ -1372,14 +1370,14 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
     out = out.replace("__REPO_NAME__", esc(repo_name))
     out = out.replace("__REPO_META__", esc(f"{repo_root} · {sha or 'no sha'}"))
     out = out.replace("__NAV_COUNT__", nav_count)
-    out = out.replace("__NAV_REPORT__", _nav_report_html(bool(md_text.strip())))
+    out = out.replace("__NAV_REPORT__", _nav_report_html(bool(md_text.strip()) or bool(verification)))
     out = out.replace("__HERO_EYEBROW__", esc(f"Run · {_fmt_date(first_ts)} · {repo_name}"))
     out = out.replace("__HERO_TITLE__", hero_title)
     out = out.replace("__HERO_SUB__", esc(hero_sub))
     out = out.replace("__HYPOTHESIS__", _hypothesis_html(md_text))
     out = out.replace("__META_CHIPS__", chips)
     out = out.replace("__METRICS__", metrics)
-    out = out.replace("__VERIFY_PANEL__", _verify_panel_html(verification) or _blocker_panel_html(blocker))
+    out = out.replace("__VERIFY_PANEL__", _blocker_panel_html(blocker))
     out = out.replace("__PRESSURE_VIS__", "" if waves else " hidden")
     out = out.replace("__CHART_NOTE__", esc(chart_note))
     out = out.replace("__CHART_KEY__", chart_key)
@@ -1426,7 +1424,7 @@ def render_run_page(run_dir: Path, run_id: str | None, *, serve: bool = True) ->
     out = out.replace("__EXP_TABLE__", _experiments_table_html(experiments, verification))
     out = out.replace("__TRAIL_EVENTS__", trail_html)
     out = out.replace("__EVIDENCE_ROWS__", "".join(ev_rows))
-    out = out.replace("__REPORT_SECTION__", _report_section_html(md_text))
+    out = out.replace("__REPORT_SECTION__", _report_section_html(md_text, verification))
     out = out.replace("__ENV_ROWS__", env_rows)
     out = out.replace(
         "__FOOTER_STATS__",

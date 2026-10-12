@@ -146,7 +146,37 @@ def summarize_run(run_dir: Path) -> RunSummary | None:
         return None
 
 
-def scan_runs(runs_root: Path, *, repo_filter: str | None = None) -> list[RunSummary]:
+_POST_BOOT_STATES = {
+    "completed",
+    "investigation_incomplete",
+    "measurement_incomplete",
+    "generator_limited",
+    "above_measured_range",
+}
+_NOT_BOOTED_STATES = {
+    "boot_failed",
+    "no_entrypoint",
+    "needs_input",
+    "policy_refused",
+    "blocked",
+    "egress_not_enforced",
+}
+
+
+def run_booted(summary: RunSummary) -> bool:
+    """True when the app came up; failed-boot blocker states stay hidden on the web index."""
+    if summary.waves > 0:
+        return True
+    if summary.state in _POST_BOOT_STATES:
+        return True
+    if summary.state in _NOT_BOOTED_STATES:
+        return False
+    return False
+
+
+def scan_runs(
+    runs_root: Path, *, repo_filter: str | None = None, booted_only: bool = False
+) -> list[RunSummary]:
     """Newest-first summaries; unreadable entries are skipped, never fatal."""
     try:
         children = sorted(
@@ -161,6 +191,8 @@ def scan_runs(runs_root: Path, *, repo_filter: str | None = None) -> list[RunSum
         if summary is None:
             continue
         if repo_filter and repo_filter.lower() not in summary.repo_root.lower():
+            continue
+        if booted_only and not run_booted(summary):
             continue
         out.append(summary)
     out.sort(key=lambda s: s.mtime, reverse=True)

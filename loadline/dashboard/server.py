@@ -23,8 +23,12 @@ def _verdict_label(summary: Any) -> str:
     return "not verified"
 
 
+def _web_runs(home: Path, repo_filter: str | None = None):
+    return scan_runs(home / "runs", repo_filter=repo_filter or None, booted_only=True)
+
+
 def _index_page(home: Path, repo_filter: str | None = None) -> str:
-    summaries = scan_runs(home / "runs", repo_filter=repo_filter or None)
+    summaries = _web_runs(home, repo_filter)
     try:
         from loadline.dashboard.render import _DIR as _ddir
 
@@ -113,7 +117,7 @@ class _Handler(BaseHTTPRequestHandler):
                 {"run_id": s.run_id, "repo": s.repo_root, "state": s.state,
                  "peak_rps": s.peak_rps, "waves": s.waves,
                  "verification_verdict": s.verification_verdict}
-                for s in scan_runs(self.home / "runs", repo_filter=repo)
+                for s in _web_runs(self.home, repo)
             ]
             self._send(200, json.dumps(payload, indent=2).encode(), "application/json")
             return
