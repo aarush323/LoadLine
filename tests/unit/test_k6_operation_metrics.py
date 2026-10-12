@@ -98,3 +98,46 @@ def test_sanitize_legacy_status_zero_bucket():
     assert row["status_counts"] == {}
     assert row["error_count"] == 0
     assert row["error_rate"] == 0.0
+
+
+def test_aggregate_200_404_503_three_counts():
+    metrics = {
+        "http_reqs{operation:search,status:200}": {"values": {"count": 80}},
+        "http_reqs{operation:search,status:404}": {"values": {"count": 10}},
+        "http_reqs{operation:search,status:503}": {"values": {"count": 5}},
+        "http_req_duration{operation:search}": {"values": {"med": 20, "p(95)": 100, "count": 95}},
+        "http_req_failed{operation:search}": {"values": {"rate": 0.15}},
+    }
+    ops = aggregate_operations_from_metrics(metrics)
+    row = ops["search"]
+    assert row["status_counts"] == {"200": 80, "404": 10, "503": 5}
+    assert row["count"] == 95
+    assert row["error_count"] == 15
+    assert row["http_status_known"] is True
+    assert row["status_counts_reliable"] is True
+
+
+def test_all_zero_status_bucket_is_not_success():
+    # Legacy k6 "0" bucket (no HTTP response) is sanitized away; the result
+    # must not be treated as a successful run — status is unknown/unreliable.
+    row = sanitize_operation_metrics(
+        {"count": 20, "error_count": 20, "error_rate": 1.0, "status_counts": {"0": 20}}
+    )
+    assert row["status_counts"] == {}
+    assert row["http_status_known"] is False
+    assert row["status_counts_reliable"] is False
+    # Aggregator path: status:0 tags carry no valid HTTP status, so the
+    # operation must stay unreliable rather than reporting success.
+    ops = aggregate_operations_from_metrics(
+        {
+            "http_reqs{operation:broken,status:0}": {"values": {"count": 20}},
+            "http_req_duration{operation:broken}": {"values": {"med": 0, "p(95)": 0, "count": 20}},
+        }
+    )
+    assert ops["broken"]["http_status_known"] is False
+    assert ops["broken"]["status_counts_reliable"] is False
+
+
+def test_empty_operations_is_no_successful_data():
+    ops = aggregate_operations_from_metrics({})
+    assert ops == {}

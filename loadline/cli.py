@@ -336,11 +336,6 @@ def main(argv: list[str] | None = None) -> int:
     doc = sub.add_parser("doctor")
     doc.add_argument("--cleanup", action="store_true")
     doc.add_argument("--check-model", action="store_true")
-    load_p = sub.add_parser(
-        "load",
-        help="Trial-boot a repo and save .loadline.yaml. Does not run k6.",
-    )
-    load_p.add_argument("repo", nargs="?", type=Path, default=Path("."))
     analyze_parser = sub.add_parser("analyze")
     analyze_parser.add_argument("repo", nargs="?", type=Path, default=Path("."))
     analyze_parser.add_argument("--openapi", type=Path)
@@ -372,6 +367,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     run_p.add_argument("--no-color", action="store_true", help="Disable ANSI colors.")
     run_p.add_argument("--no-report-print", action="store_true", help="Do not print report.md to stdout.")
+    load_p = sub.add_parser(
+        "load",
+        help="Figure out config, try a boot, write config, tear down.",
+    )
+    load_p.add_argument("--repo", type=Path, default=Path("."))
+    load_p.add_argument(
+        "--write-to-repo",
+        action="store_true",
+        help="Also copy the generated config to repo .loadline.yaml.",
+    )
+    load_p.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Write loadline.proposed.yaml and print diff instead of overwriting.",
+    )
+    load_p.add_argument("--quiet", action="store_true", help="Errors only on stderr; hide progress.")
     report_p = sub.add_parser("report", help="Show a finished run report.")
     report_sub = report_p.add_subparsers(dest="report_cmd")
     show_p = report_sub.add_parser("show", help="Print report.md from a run directory.")
@@ -406,9 +417,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         return doctor(cleanup=args.cleanup, check_model=args.check_model)
     if args.command == "load":
-        from loadline.load_cmd import load_repository
+        from loadline.load import load_repo
 
-        return load_repository(normalize_user_repo_path(args.repo))
+        load_console = RunConsole(quiet=args.quiet, verbose=False, json_mode=False)
+        return load_repo(
+            normalize_user_repo_path(args.repo),
+            write_to_repo=args.write_to_repo,
+            refresh=args.refresh,
+            console=load_console,
+        )
     if args.command == "analyze":
         if args.live_openapi and args.openapi is None:
             print("error: --live-openapi requires --openapi", file=sys.stderr)

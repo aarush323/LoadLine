@@ -38,6 +38,13 @@ def test_short_local_config_unchanged():
     assert not outcome.replacements
 
 
+def test_kafka_advertised_listeners_not_cleared_as_credential():
+    listeners = "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093"
+    outcome = apply_env_policy({"KAFKA_ADVERTISED_LISTENERS": listeners})
+    assert outcome.env["KAFKA_ADVERTISED_LISTENERS"] == listeners
+    assert not outcome.replacements
+
+
 def test_stripe_literal_cleared_in_sandbox_policy():
     compose = {
         "services": {

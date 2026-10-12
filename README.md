@@ -1,154 +1,114 @@
-# Loadline (NeatHacks)
+# Loadline
 
-**Loadline** boots a repo’s app in Docker, load-tests the HTTP APIs, and runs an **Investigator** agent that reads the code and writes an evidence-backed report (or a clear **blocked** reason).
+**Find the breaking point before production does.**
 
-There are **two commands** teammates care about:
+Loadline boots your application in isolated Docker, drives HTTP load with [k6](https://k6.io), and runs an investigator that reads the repository and writes a capacity report—or a named blocker when the run cannot continue.
 
-| Command | One line |
-|---------|----------|
-| **`loadline load`** | “Can we boot this repo? Save the boot config.” |
-| **`loadline run`** | “Boot it, investigate under load, write the report.” |
+Install from this repository (`uv sync`; no PyPI package).
 
-`run` does **not** call `load`. You run `load` yourself when you want a saved config before a full run.
+<p align="center">
+  <a href="website/">
+    <img src="WEBSITE.png" alt="Loadline landing page — hero, quickstart, and CLI setup steps" width="100%" />
+  </a>
+</p>
 
----
-
-## Step 0 — your `.env` (Loadline on your laptop)
-
-Before either command, set up **this repo’s** `.env` (copy from `.env.example`). That is **not** the app under test; it is **keys and settings for Loadline**:
-
-- **LLM:** `LOADLINE_MODEL` plus `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` (required for `loadline run`, not for `load` today).
-- **Optional:** `NEATLOGS_*` for traces.
-
-Check: `uv run loadline doctor` (add `--check-model` before a real `run`).
-
-The **target app’s** env (Compose, `.env` for Postgres, test users, etc.) is what `load` / `run` figure out when they **boot**—see below.
+<p align="center">
+  <sub>Landing page source: <a href="website/">website/</a> · Operator guide: <a href="setup.md">setup.md</a></sub>
+</p>
 
 ---
 
-## Workflow: `loadline load`
-
-**Goal:** Prove the repo can boot and **write a small config file** so the next `run` does not have to guess as much. **No LLM investigator. No `report.md`.**
+## Quick start
 
 ```bash
-uv run loadline load /path/to/app-repo
-# optional: also copy config into the repo
-uv run loadline load /path/to/app-repo --write-to-repo
+git clone https://github.com/aarush323/NeatHacks.git
+cd NeatHacks
+uv sync
+cp .env.example .env
+# Set LOADLINE_MODEL and the matching provider API key in .env
+
+uv run loadline doctor
+uv run loadline doctor --check-model
+uv run loadline load  --repo /absolute/path/to/your-app
+uv run loadline run   --repo /absolute/path/to/your-app
 ```
 
-### What happens (steps)
+| Step | Command | Outcome |
+|------|---------|---------|
+| Boot config | `loadline load --repo <path>` | Trial boot, saved `loadline.yaml`. No report. |
+| Investigation | `loadline run --repo <path>` | Boot, load tests, `report.md`, teardown. Does not run `load`. |
+| History | `loadline dashboard` / `dashboard --serve` | Browse past runs. |
 
-1. **Docker check** — Is the daemon up? If not → `blocked`, stop.
-2. **Discover** — Is there a `docker-compose` file or Dockerfile? If neither → `blocked`, stop.
-3. **Resolve** — Pick compose file, app service, container port, health path (from repo layout + optional `.loadline.yaml` hints). If Loadline cannot pick a single HTTP app → `blocked`, stop.
-4. **Trial boot** — Start the stack, wait until health checks pass, then **tear it down** (`teardown=True`). This boot is thrown away; it is only a proof.
-5. **Write config** — Save `loadline.yaml` under Loadline’s home dir (`LOADLINE_HOME/configs/...`). With `--write-to-repo`, also write `.loadline.yaml` in the app repo.
-
-Output is a path like `wrote .../loadline.yaml`, not a performance report.
-
-### Setup agent (planned, not the default path today)
-
-Today, `load` is **deterministic** (steps above only).
-
-We plan a **setup agent** for repos where boot is ambiguous—for example login/auth not described, or unclear “prepare” commands (migrations, seed scripts). That agent would loop with its own small tools (`check_config`, `try_boot`, `write_config`), still **without** running the Investigator or k6 experiments. `loadline run` will **never** call that agent; only `load` will.
-
-Until that lands, use `load` for the trial boot + saved yaml, or hand-edit `.loadline.yaml` when you already know the service/port/health path.
+Use **absolute** paths for `--repo`. Target app env (Compose, DB, secrets) is discovered at boot—not in Loadline’s `.env`.
 
 ---
 
-## Workflow: `loadline run`
+## Requirements
 
-**Goal:** Boot the app **for real**, run the **Investigator** agent, save **`report.md`**, then clean up Docker.
+| | |
+|---|---|
+| Runtime | [Python 3.12](https://www.python.org/) (`>=3.12,<3.13`), [uv](https://docs.astral.sh/uv/) |
+| Host | [Git](https://git-scm.com/) 2.36+, [Docker](https://docs.docker.com/) with Compose v2 |
+| `loadline run` | `LOADLINE_MODEL` plus `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY` |
+| Optional | [neatlogs](https://neatlogs.com) (`NEATLOGS_*`) for traces |
 
-```bash
-uv run loadline run /path/to/app-repo
-```
-
-### What happens (steps)
-
-1. **Preflight** — Confirm model API keys are set. Missing key → exit before Docker.
-2. **Boot** — `boot_and_prepare`: start Compose (using hints, repo `.loadline.yaml`, and/or saved config from `load`). Wait until the app is healthy. Stack **stays running** for the next phase. Failure → **blocker** printed, artifacts under `run_dir`, teardown as needed.
-3. **Investigate** — Investigator **agent loop** (see next section). Uses the booted network and only allowed internal hosts.
-4. **Report** — The agent’s **last message** is written to `report.md` (and minimal `report.json`). Printed to the terminal unless you pass `--no-report-print`.
-5. **Teardown** — Stop containers/networks/volumes labelled for this run.
-
-Optional: `loadline dashboard` / `loadline dashboard --serve` to browse past runs after you have some `run_dir`s.
+`loadline doctor` checks the environment; it does not install OS packages. `doctor --cleanup` removes resources labelled `loadline.run=*`.
 
 ---
 
-## Investigator agent loop (`loadline run` only)
+## `loadline run` pipeline
 
-After boot, one **Pydantic AI** agent runs with **three tools**. This is the “main loop” for capacity investigation.
+1. Preflight — model and API key before Docker.
+2. Boot — Compose from repo hints, `.loadline.yaml`, and/or config from `load`.
+3. Investigate — [Pydantic AI](https://ai.pydantic.dev/) agent with fixed tools (below).
+4. Report — final message → `$LOADLINE_HOME/runs/<run_id>/report.md`.
+5. Teardown — labelled containers, networks, volumes.
 
-**Starting prompt (idea):** *The app is booted. Find which endpoints break under load and why, using code and `run_k6`. Your last message is the report.*
+The agent does not modify the target repo or open pull requests.
 
-### Repeat until the model stops or hits limits
+### Investigator tools
 
-```text
-┌─────────────────────────────────────────────────────────┐
-│  Agent thinks: which endpoint? what rate? what code?    │
-└───────────────────────────┬─────────────────────────────┘
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│  Calls exactly one tool:                                │
-│    • repo          • read_file        • run_k6          │
-└───────────────────────────┬─────────────────────────────┘
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│  Loadline runs the tool and returns JSON (metrics,      │
-│  snippets, graph text, or an error).                    │
-└───────────────────────────┬─────────────────────────────┘
-                            ▼
-                    (loop again)
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│  Final assistant message → saved as report.md           │
-└─────────────────────────────────────────────────────────┘
-```
+| Tool | Function |
+|------|----------|
+| `repo` | [Entire Graph](https://docs.entire.io/cli-reference/graph) search and navigation; route listing; ripgrep if graph coverage is degraded. |
+| `read_file` | Line-bounded source reads for citations (secret paths refused). |
+| `run_k6` | One structured experiment per call—endpoints, fixed rate, duration. Loadline compiles and runs k6 on the internal network. |
 
-### The three tools (plain English)
+k6 produces metrics; the investigator ties them to code. No free-form k6 scripts from the model.
 
-| Tool | Use when the agent wants to… |
-|------|------------------------------|
-| **`repo`** | **Search and navigate code** via Entire Graph (`search`, `def`, `neighbors`, `impact`) or list **`routes`** found in the repo. Ripgrep may back up search if the graph is degraded. |
-| **`read_file`** | **Read a line range** from app source in the target repo (for citations in the report). Secret paths like `.env` are refused. |
-| **`run_k6`** | **Run one short load experiment**: pick endpoints, a fixed **rate** (req/s), and **duration**. Loadline compiles and runs **k6**, then returns per-operation latency and error metrics. Each call is one experiment—not one long ramp. |
-
-Prompt: `agents/investigator_prompt.md`. Tools: `loadline/investigator/tools.py`.
+Prompt: `agents/investigator_prompt.md` · Code: `loadline/investigator/`
 
 ---
 
-## What is k6?
+## `loadline load`
 
-**[k6](https://k6.io)** is a standard **HTTP load generator**. At a chosen **arrival rate** it sends many requests for a fixed time and records latency and failures.
-
-Loadline does **not** let the model write free-form k6 scripts. The agent only passes a structured plan to **`run_k6`**; Loadline compiles and runs k6 (often in Docker on the same network as the app) and returns numbers the agent can compare across experiments.
-
-**k6 = measurements. Investigator = read code + explain what the numbers mean.**
+Deterministic: Docker check → compose/Dockerfile discovery → service and health resolution → trial boot (then tear down) → write config under `LOADLINE_HOME/configs/`. Optional `--write-to-repo` for `.loadline.yaml` in the app repo.
 
 ---
 
-## Typical teammate order
+## Stack
 
-```text
-1. uv sync && cp .env.example .env   # your LLM keys
-2. uv run loadline doctor --check-model
-3. uv run loadline load ./app-repo   # optional but good on a new repo
-4. uv run loadline run ./app-repo    # boot → agent loop → report.md
-```
+| | |
+|---|---|
+| Load | [k6](https://k6.io/docs/) |
+| Code graph | [Entire](https://docs.entire.io/) |
+| Agent | [Pydantic AI](https://ai.pydantic.dev/) |
+| Traces | [neatlogs](https://neatlogs.com) (optional) |
+| Isolation | Docker Compose, labelled teardown |
 
 ---
 
-## Where things live in the repo
+## Repository map
 
-| Topic | Path |
-|-------|------|
+| | Path |
+|---|------|
 | CLI | `loadline/cli.py` |
-| `run` pipeline | `loadline/run_pipeline.py` |
-| `load` command | `loadline/load/` |
+| `run` | `loadline/run_pipeline.py` |
+| `load` | `loadline/load/` |
 | Investigator | `loadline/investigator/` |
-| k6 compile/run | `loadline/adapters/generator/` |
-| Dashboard UI | `loadline/ui/`, `loadline/dashboard/` |
-| Product summary | `mvp.md` |
+| k6 | `loadline/adapters/generator/` |
+| Dashboard | `loadline/dashboard/`, `loadline/ui/` |
+| Site | `website/` |
+| Scope | `mvp.md` |
 
-**Partners (hackathon):** Entire (code graph for `repo`), neatlogs (optional tracing), cfo.ai (business plan only).
+More detail: [setup.md](setup.md)

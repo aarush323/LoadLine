@@ -32,7 +32,7 @@ def test_run_loadline_skips_pre_agent_load_stages(tmp_path: Path):
     inv_result = InvestigationResult("rid", run_dir, "completed", agent_output="# ok")
     (run_dir / "report.md").write_text("# ok")
 
-    with patch("loadline.run_pipeline.boot_repository", return_value=BootOk()):
+    with patch("loadline.run_pipeline.boot_and_prepare", return_value=BootOk()):
         with patch("loadline.run_pipeline.run_investigation_sync", return_value=inv_result) as inv_mock:
             with patch("loadline.run_pipeline.teardown_boot_outcome"):
                 with patch("loadline.run_pipeline.register_run_cleanup"):

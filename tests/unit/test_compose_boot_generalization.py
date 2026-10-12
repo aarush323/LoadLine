@@ -111,3 +111,25 @@ def test_health_url_uses_command_port_when_no_healthcheck():
     port, path = _health_url("app", None, svc)
     assert port == 8000
     assert path == "/health"
+
+
+def test_infer_app_service_rejects_infra_only_compose():
+    """Brokers/DBs with published ports are not HTTP applications."""
+    compose = {
+        "services": {
+            "zookeeper": {"image": "confluentinc/cp-zookeeper:7.5.0", "ports": ["2181:2181"]},
+            "kafka": {
+                "image": "confluentinc/cp-kafka:7.5.0",
+                "ports": ["9093:9093"],
+                "depends_on": ["zookeeper"],
+            },
+            "redis": {"image": "redis:7.2", "ports": ["6379:6379"]},
+            "postgres": {"image": "postgres:15", "ports": ["5433:5432"]},
+            "cassandra": {
+                "image": "cassandra:4.1",
+                "ports": ["9042:9042"],
+                "healthcheck": {"test": ["CMD", "cqlsh", "-e", "describe keyspaces"]},
+            },
+        }
+    }
+    assert _infer_app_service(compose, None) is None

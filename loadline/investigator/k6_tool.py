@@ -21,20 +21,17 @@ _MAX_DURATION_S = 120
 _DOCKER_TIMEOUT_GRACE_S = 90
 
 
-def _app_target(boot: dict[str, Any]) -> tuple[str, int]:
+def _app_target(boot: dict[str, Any]) -> tuple[str, int] | None:
     health = boot.get("health") or {}
-    url = health.get("url") or ""
-    if url:
-        parsed = urlparse(url)
-        host = parsed.hostname or "app"
-        port = parsed.port or 8000
-        return host, port
-    services = boot.get("services") or []
-    if services:
-        name = services[0].get("name") or "app"
-        port = int(services[0].get("port") or 8000)
-        return name, port
-    return "app", 8000
+    url = (health.get("url") or "").strip()
+    if not url:
+        return None
+    parsed = urlparse(url)
+    host = parsed.hostname
+    if not host:
+        return None
+    port = parsed.port or 8000
+    return host, port
 
 
 def _slug(path: str, method: str) -> str:
@@ -94,7 +91,10 @@ def build_plan_from_endpoints(
     boot: dict[str, Any],
     auth: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    service, port = _app_target(boot)
+    target = _app_target(boot)
+    if target is None:
+        raise ValueError("origin_unknown: boot health URL is missing")
+    service, port = target
     mix: list[dict[str, Any]] = []
     weights = [max(1, int(ep.get("weight") or 1)) for ep in endpoints]
     for ep, weight in zip(endpoints, weights):
@@ -253,14 +253,21 @@ def _resolve_auth_secrets(deps: InvestigationDeps, auth: dict[str, Any] | None) 
     if not auth:
         return None, None
     profile = str(auth.get("profile") or "default_user")
-    if profile != "default_user":
-        return None, f"unknown auth profile: {profile}"
-    sealed = deps.auth_profiles.get("default_user") or {}
-    username = sealed.get("username") or ""
-    password = sealed.get("password") or ""
-    if not username or not password:
+    # New map first: if requested profile present, use it.
+    present = deps.auth_profiles.get(profile) or {}
+    username = present.get("username") or ""
+    password = present.get("password") or ""
+    if username and password:
+        return {"username": username, "password": password}, None
+    # Fallback for default_user keeps current template runs working.
+    if profile == "default_user":
+        sealed = deps.auth_profiles.get("default_user") or {}
+        username = sealed.get("username") or ""
+        password = sealed.get("password") or ""
+        if username and password:
+            return {"username": username, "password": password}, None
         return None, "default_user credentials are not in the boot env"
-    return {"username": username, "password": password}, None
+    return None, f"unknown auth profile: {profile}"
 
 
 def run_k6(
@@ -305,14 +312,23 @@ def run_k6(
             return {"error": err}
     auth_secrets, auth_err = _resolve_auth_secrets(deps, auth)
     if auth_err:
+        if auth is not None:
+            return {"error": auth_err, "code": "auth_failed"}
         return {"error": auth_err}
     allowed = deps.allowed_hosts
     network = deps.network
     if not allowed or not network:
         return {"error": "sandbox network not configured"}
-    plan = build_plan_from_endpoints(
-        endpoints, rate=rate, duration_s=duration_s, boot=deps.boot, auth=auth
-    )
+    if _app_target(deps.boot) is None:
+        return {"error": "origin_unknown: boot health URL is missing", "code": "origin_unknown"}
+    try:
+        plan = build_plan_from_endpoints(
+            endpoints, rate=rate, duration_s=duration_s, boot=deps.boot, auth=auth
+        )
+    except ValueError as exc:
+        if "origin_unknown" in str(exc):
+            return {"error": str(exc), "code": "origin_unknown"}
+        raise
     compiled = compile_plan(plan, allowed, auth_secrets=auth_secrets)
     if isinstance(compiled, CompileError):
         return {"error": compiled.message}
@@ -363,7 +379,13 @@ def run_k6(
     )
     if not result.summary.parse_ok:
         excerpt = (result.stderr or result.summary.error or "k6 failed")[:2000]
+        if auth is not None and ("login failed" in excerpt.lower() or "missing token" in excerpt.lower()):
+            return {"error": f"auth_failed: {excerpt}", "code": "auth_failed", "experiment_id": experiment_id}
         return {"error": excerpt, "experiment_id": experiment_id}
+    # k6 setup() login throw surfaces in stderr even when summary parses.
+    _stderr_low = (result.stderr or "").lower()
+    if auth is not None and ("login failed" in _stderr_low or "missing token" in _stderr_low):
+        return {"error": f"auth_failed: {(result.stderr or '')[:2000]}", "code": "auth_failed", "experiment_id": experiment_id}
     raw = dict(result.summary.raw_json or {})
     raw["operations"] = result.summary.operations
     out = format_run_k6_result(
