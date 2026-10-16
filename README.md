@@ -2,7 +2,7 @@
 
 **Find the breaking point before production does.**
 
-Loadline boots your application in isolated Docker, drives HTTP load with [k6](https://k6.io), and runs an investigator that reads the repository and writes a capacity report—or a named blocker when the run cannot continue.
+Loadline boots your application in isolated Docker, drives HTTP load with [k6](https://k6.io), and runs an investigator that reads the repository and writes a capacity report—or a named blocker when the run cannot continue. After a run, `loadline verify` can patch the cited file and replay the same k6 call; a pull request opens only if that metric moved.
 
 Install from this repository (`uv sync`; no PyPI package).
 
@@ -29,14 +29,16 @@ cp .env.example .env
 
 uv run loadline doctor
 uv run loadline doctor --check-model
-uv run loadline load  --repo /absolute/path/to/your-app
-uv run loadline run   --repo /absolute/path/to/your-app
+uv run loadline load   --repo /absolute/path/to/your-app
+uv run loadline run    --repo /absolute/path/to/your-app
+uv run loadline verify ~/.local/share/loadline/runs/<run_id>
 ```
 
 | Step | Command | Outcome |
 |------|---------|---------|
 | Boot config | `loadline load --repo <path>` | Trial boot, saved `loadline.yaml`. No report. |
 | Investigation | `loadline run --repo <path>` | Boot, load tests, `report.md`, teardown. Does not run `load`. |
+| Verify | `loadline verify <run_dir>` | Replay the cited k6 call. Open a PR only if that metric moved. |
 | History | `loadline dashboard` / `dashboard --serve` | Browse past runs. |
 
 Use **absolute** paths for `--repo`. Target app env (Compose, DB, secrets) is discovered at boot—not in Loadline’s `.env`.
@@ -56,6 +58,12 @@ Use **absolute** paths for `--repo`. Target app env (Compose, DB, secrets) is di
 
 ---
 
+## `loadline load`
+
+Deterministic: Docker check → compose/Dockerfile discovery → service and health resolution → trial boot (then tear down) → write config under `LOADLINE_HOME/configs/`. Optional `--write-to-repo` for `.loadline.yaml` in the app repo.
+
+---
+
 ## `loadline run` pipeline
 
 1. Preflight — model and API key before Docker.
@@ -64,7 +72,7 @@ Use **absolute** paths for `--repo`. Target app env (Compose, DB, secrets) is di
 4. Report — final message → `$LOADLINE_HOME/runs/<run_id>/report.md`.
 5. Teardown — labelled containers, networks, volumes.
 
-The agent does not modify the target repo or open pull requests.
+The investigator does not modify the target repo or open pull requests. That is `verify`.
 
 ### Investigator tools
 
@@ -80,9 +88,27 @@ Prompt: `agents/investigator_prompt.md` · Code: `loadline/investigator/`
 
 ---
 
-## `loadline load`
+## `loadline verify`
 
-Deterministic: Docker check → compose/Dockerfile discovery → service and health resolution → trial boot (then tear down) → write config under `LOADLINE_HOME/configs/`. Optional `--write-to-repo` for `.loadline.yaml` in the app repo.
+After a `run` whose `report.md` ends with a `loadline_fix` block, patch only that cited file and replay the **same** k6 call (same endpoints, rate, duration).
+
+```bash
+uv run loadline verify ~/.local/share/loadline/runs/<run_id>
+uv run loadline verify ~/.local/share/loadline/runs/<run_id> --no-pr   # write verification.json; do not push
+```
+
+`run_dir` must be under `$LOADLINE_HOME` (default `~/.local/share/loadline`). The target worktree must be a clean git checkout.
+
+| Verdict | What happens |
+|---------|----------------|
+| `improved` | Cited metric moved; a PR opens unless you passed `--no-pr`. |
+| `hypothesis_failed` | Replay did not move the metric. No PR. |
+| `no_verifiable_fix` | Missing or invalid `loadline_fix` fence. No patch. |
+| `remeasure_blocked` | Patch or replay could not run. No PR. |
+
+Writes `verification.json` (and a comparison section on the replay report). `--i-am-patching-loadline` allows patching this repository; the demo does not use it.
+
+Code: `loadline/verify_cmd.py`
 
 ---
 
@@ -105,6 +131,7 @@ Deterministic: Docker check → compose/Dockerfile discovery → service and hea
 | CLI | `loadline/cli.py` |
 | `run` | `loadline/run_pipeline.py` |
 | `load` | `loadline/load/` |
+| `verify` | `loadline/verify_cmd.py` |
 | Investigator | `loadline/investigator/` |
 | k6 | `loadline/adapters/generator/` |
 | Dashboard | `loadline/dashboard/`, `loadline/ui/` |
